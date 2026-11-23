@@ -6,8 +6,9 @@ It runs entirely on Cloudflare: one Worker serves the React dashboard and the AP
 
 ## What you get
 
-- **Overview** - headline numbers, sales over time, and a top-values chart for each attribute, country and state.
-- **Explore** - pick a metric (units, orders, revenue), group by any attribute or field, optionally split by a second one, and view it as a chart, a heatmap (for example rim x hub) or a table. Filter by date, store, country, state and any attribute. Export to CSV.
+- **Overview** - headline numbers, wheels sold over time, and a top-values chart for each attribute, country and state.
+- **Explore** - pick a metric (wheels, orders, revenue, units), group by any attribute or field, optionally split by a second one, and view it as a chart, a heatmap (for example rim x hub) or a table. Filter by date, store, country, state and any attribute. Export to CSV.
+- **Wheels sold** counts a wheelset as 2 wheels and a single front or rear wheel as 1, read from the product name ("Wheelset" or "Front + Rear" for a set, "Front"/"Rear" for a single). Other products, and wheel services such as rebuilds, wheel shells, per-wheel upgrades, deposits and shipping, count as 0. Units counts every product once per unit.
 - **Attributes** - map each store’s property keys ("Rim", "Rim Choice", "Select your rim") to one shared attribute so stores line up.
   Values that differ only in case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in, 27.5) are combined automatically, and you can combine others yourself (for example show "Mullet Set" as "Mullet"). The app suggests these when several values differ by the same word.
 - **Stores** - connect stores, see sync status, set currency conversion rates.

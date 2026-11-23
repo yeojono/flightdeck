@@ -19,7 +19,7 @@ const TABLE_LIMIT = 500;
 export function Explore({ meta, filters, setFilters }: AppContext) {
   const theme = useTheme();
   const firstAttr = meta.dimensions.find((d) => d.group === "Attributes" && d.mapped)?.id ?? "product";
-  const [state, setState] = useStored<ExploreState>("wi.explore", { metric: "units", groupBy: firstAttr, splitBy: "", topN: 15, view: "chart", includeMissing: false });
+  const [state, setState] = useStored<ExploreState>("wi.explore", { metric: "wheels", groupBy: firstAttr, splitBy: "", topN: 15, view: "chart", includeMissing: false });
   const [sortDesc, setSortDesc] = useState(true);
 
   // Saved state can point at a dimension that no longer exists.
@@ -34,23 +34,25 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
   const request = toRequest(filters, { groupBy: splitBy ? [groupBy, splitBy] : [groupBy], includeMissing: state.includeMissing, limit: 20000 });
   const { data, loading, error } = useReport(request);
   const rows = data?.rows ?? [];
-  const metricLabel = METRICS.find((m) => m.id === state.metric)!.label;
+  // Saved state can name a metric that no longer exists.
+  const metric: Metric = METRICS.some((m) => m.id === state.metric) ? state.metric : "wheels";
+  const metricLabel = METRICS.find((m) => m.id === metric)!.label;
   const currency = meta.reportingCurrency;
-  const total = Number(data?.totals?.[state.metric]) || 0;
+  const total = Number(data?.totals?.[metric]) || 0;
 
   const sorted = useMemo(() => {
     const out = [...rows];
-    if (time) out.sort((a, b) => (a.g1 ?? "").localeCompare(b.g1 ?? "") || b[state.metric] - a[state.metric]);
-    else out.sort((a, b) => (sortDesc ? b[state.metric] - a[state.metric] : a[state.metric] - b[state.metric]));
+    if (time) out.sort((a, b) => (a.g1 ?? "").localeCompare(b.g1 ?? "") || b[metric] - a[metric]);
+    else out.sort((a, b) => (sortDesc ? b[metric] - a[metric] : a[metric] - b[metric]));
     return out;
-  }, [rows, state.metric, sortDesc, time]);
+  }, [rows, metric, sortDesc, time]);
 
   const exportCsv = () => {
-    const head = [label(groupBy), ...(splitBy ? [label(splitBy)] : []), "Units", "Orders", `Revenue (${currency})`, "Line items"];
+    const head = [label(groupBy), ...(splitBy ? [label(splitBy)] : []), "Wheels", "Orders", `Revenue (${currency})`, "Units", "Line items"];
     downloadCsv(
       `flightdeck-${groupBy.replace(/[^a-z0-9]+/gi, "-")}${splitBy ? "-by-" + splitBy.replace(/[^a-z0-9]+/gi, "-") : ""}.csv`,
       head,
-      sorted.map((r) => [r.g1, ...(splitBy ? [r.g2] : []), r.units, r.orders, r.revenue, r.line_items]),
+      sorted.map((r) => [r.g1, ...(splitBy ? [r.g2] : []), r.wheels, r.orders, r.revenue, r.units, r.line_items]),
     );
   };
 
@@ -65,7 +67,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
             Show
             <div className="segmented" role="group" aria-label="Metric">
               {METRICS.map((m) => (
-                <button key={m.id} type="button" className={state.metric === m.id ? "on" : ""} onClick={() => set({ metric: m.id })}>
+                <button key={m.id} type="button" className={metric === m.id ? "on" : ""} onClick={() => set({ metric: m.id })}>
                   {m.label}
                 </button>
               ))}
@@ -129,7 +131,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
             {splitBy && `, split by ${label(splitBy).toLowerCase()}`}
           </h2>
           <span className="muted">
-            {data && `${formatValue(total, state.metric, currency)} total`}
+            {data && `${formatValue(total, metric, currency)} total`}
           </span>
         </header>
         {error && <div className="banner error">{error}</div>}
@@ -140,7 +142,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
           {data && view === "chart" && (
             <ReportChart
               rows={rows}
-              metric={state.metric}
+              metric={metric}
               currency={currency}
               scope={splitBy}
               time={time}
@@ -151,7 +153,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
               height={time ? 360 : undefined}
             />
           )}
-          {data && view === "heatmap" && <Heatmap rows={rows} metric={state.metric} currency={currency} topN={state.topN} theme={theme} />}
+          {data && view === "heatmap" && <Heatmap rows={rows} metric={metric} currency={currency} topN={state.topN} theme={theme} />}
           {data && view === "table" && (
             <div className="table-wrap">
               <table className="data">
@@ -161,7 +163,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
                     {splitBy && <th>{label(splitBy)}</th>}
                     {METRICS.map((m) => (
                       <th key={m.id} className="num">
-                        {m.id === state.metric && !time ? (
+                        {m.id === metric && !time ? (
                           <button className="link" onClick={() => setSortDesc(!sortDesc)} title="Change sort order">
                             {m.label} {sortDesc ? "↓" : "↑"}
                           </button>
@@ -178,10 +180,12 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
                     <tr key={i}>
                       <td>{time ? formatBucket(r.g1 ?? "") : r.g1}</td>
                       {splitBy && <td>{r.g2}</td>}
-                      <td className="num">{formatValue(r.units, "units", currency)}</td>
-                      <td className="num">{formatValue(r.orders, "orders", currency)}</td>
-                      <td className="num">{formatValue(r.revenue, "revenue", currency)}</td>
-                      <td className="num muted">{percent(r[state.metric], total)}</td>
+                      {METRICS.map((m) => (
+                        <td key={m.id} className="num">
+                          {formatValue(r[m.id], m.id, currency)}
+                        </td>
+                      ))}
+                      <td className="num muted">{percent(r[metric], total)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -191,7 +195,10 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
             </div>
           )}
         </div>
-        {state.metric === "orders" && (splitBy || !time) && (
+        {metric === "wheels" && (
+          <p className="hint">A wheelset counts as 2 wheels and a single front or rear wheel as 1. Other products and wheel services count as 0.</p>
+        )}
+        {metric === "orders" && (splitBy || !time) && (
           <p className="hint">An order with several different values is counted once under each, so order counts can add up to more than the total.</p>
         )}
       </section>

@@ -57,6 +57,23 @@ export const BUILTIN_DIMS: Array<{ id: string; label: string; group: string; sql
   { id: "year", label: "Year", group: "Time", sql: "substr(o.day, 1, 4)" },
 ];
 
+/**
+ * How many wheels one unit of a line item is: 2 for a wheelset, 1 for a single front or rear wheel,
+ * 0 for anything else. Read from the product title and variant, because that is the only place every
+ * store says it consistently ("... Wheelset", "... Wheels (Front + Rear)", "... Rear Wheel",
+ * "... Wheel (Rear Only)"). Services and add-ons that mention wheels (rebuilds, wheel shells,
+ * "per wheel" upgrades, deposits, shipping) count as 0. SQLite LIKE ignores case.
+ */
+const WHEEL_TEXT = "(COALESCE(li.title, '') || ' ' || COALESCE(li.variant_title, ''))";
+const has = (...words: string[]) => "(" + words.map((w) => `${WHEEL_TEXT} LIKE '%${w}%'`).join(" OR ") + ")";
+export const WHEELS_PER_UNIT = `(CASE
+      WHEN NOT ${has("wheel")} THEN 0
+      WHEN ${has("rebuild", "shell", "per wheel", "upgrade", "deposit", "shipping")} THEN 0
+      WHEN ${has("wheelset", "wheel set")} OR (${has("front")} AND ${has("rear")} AND NOT ${has("only")}) THEN 2
+      WHEN ${has("front", "rear")} THEN 1
+      ELSE 0
+    END)`;
+
 export function isTimeDim(id: string): boolean {
   return (TIME_DIMS as readonly string[]).includes(id);
 }
@@ -136,6 +153,7 @@ function compose(req: ReportRequest, withGroups: boolean): { sql: string; params
   }
 
   const metrics = `
+    SUM(li.current_quantity * ${WHEELS_PER_UNIT}) AS wheels,
     SUM(li.current_quantity) AS units,
     COUNT(DISTINCT li.store_id || ':' || li.order_id) AS orders,
     ROUND(SUM(CASE WHEN li.quantity > 0 THEN li.total * li.current_quantity / li.quantity ELSE 0 END * s.fx_rate), 2) AS revenue,
@@ -151,7 +169,7 @@ function compose(req: ReportRequest, withGroups: boolean): { sql: string; params
   const selects = groupBy.map((id, i) => `COALESCE(${expr(id)}, '(not set)') AS g${i + 1}`);
   const groups = groupBy.map((id, i) => (isTimeDim(id) ? `g${i + 1}` : `g${i + 1} COLLATE NOCASE`));
   const limit = Math.min(Math.max(Number(req.limit) || 5000, 1), 20000);
-  const order = isTimeDim(groupBy[0]) ? "g1 ASC, units DESC" : "units DESC";
+  const order = isTimeDim(groupBy[0]) ? "g1 ASC, wheels DESC, units DESC" : "wheels DESC, units DESC";
   const sql = `SELECT ${selects.join(", ")},${metrics}${from}\n    GROUP BY ${groups.join(", ")}\n    ORDER BY ${order}\n    LIMIT ${limit}`;
   return { sql, params };
 }
