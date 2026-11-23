@@ -83,7 +83,10 @@ app.post("/api/stores", async (c) => {
     )
     .first<{ id: number }>();
   const sync = await startSync(c.env, row!.id, "full");
-  return c.json({ id: row!.id, runId: sync.runId, warnings: hasScope(tok.scope, "products") ? [] : ["The app has no read_products scope, so product type will be blank."] });
+  const warnings: string[] = [];
+  if (!hasScope(tok.scope, "all_orders")) warnings.push("The app has no read_all_orders scope, so only the last 60 days of orders will be imported.");
+  if (!hasScope(tok.scope, "products")) warnings.push("The app has no read_products scope, so product type will be blank.");
+  return c.json({ id: row!.id, runId: sync.runId, warnings });
 });
 
 app.patch("/api/stores/:id", async (c) => {

@@ -70,7 +70,7 @@ The app authenticates with the **client credentials grant**: it exchanges the ap
 For each organisation that owns one or more of your stores:
 
 1. Open the [Dev Dashboard](https://dev.shopify.com/dashboard) and create an app.
-2. In the app’s version, add the scopes `read_orders` and `read_products`, then release the version.
+2. In the app’s version, add the scopes `read_orders`, `read_all_orders` and `read_products`, then release the version. Without `read_all_orders`, Shopify only returns the last 60 days of orders.
 3. Under **Settings > Access requests**, enable **Bulk queries**.
 4. Install the app on each store in that organisation.
 5. Copy the **Client ID** and **Client secret** from the app’s Settings page.
@@ -87,10 +87,10 @@ Then go to **Attributes** and map the property keys it found to Rim, Hub, Colour
 
 These depend on your Shopify setup and could not be tested without a real store:
 
-- **Order history.** Shopify staff have said apps created by the merchant’s own organisation get full order history with `read_orders`. If you only see the last 60 days, the app also needs the `read_all_orders` scope.
+- **Order history.** With only `read_orders`, Shopify returns the last 60 days of orders, even for an app in the store’s own organisation. Add `read_all_orders` to the app version, release it, approve the update in the store admin if asked, then run a **Full resync** for each store (an ordinary sync only fetches orders changed since the last one, so it will not fill in the older history).
 - **State and country.** These come from the shipping address (billing address as a fallback), which Shopify treats as protected customer data. Shopify’s docs say this is available to custom apps, but if a sync finishes with a note that no address data was returned, the app needs protected customer data access for addresses enabled in the Dev Dashboard.
 - **Error `shop_not_permitted`** when connecting means the app and store are not in the same organisation, or the app is not installed on the store.
-- **Export failed with ACCESS_DENIED** means a scope is missing or Bulk queries is not enabled.
+- **Export failed with ACCESS_DENIED** means a scope is missing or Bulk queries is not enabled. The message includes Shopify’s own wording, which usually names what is missing.
 
 ## How the numbers are defined
 

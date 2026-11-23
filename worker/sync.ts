@@ -86,9 +86,9 @@ async function importChunk(env: Env, storeId: number, url: string, start: number
   }
 }
 
-function explainBulkFailure(code: string | null): string {
+function explainBulkFailure(code: string | null, detail?: string): string {
   if (code === "ACCESS_DENIED") {
-    return "Shopify denied the export (ACCESS_DENIED). Check the app version includes the read_orders and read_products scopes, and that Bulk queries is enabled under Settings > Access requests for the app in the Dev Dashboard.";
+    return (detail ? `Shopify denied the export: ${detail} ` : "Shopify denied the export (ACCESS_DENIED). ") + "Check the app version includes the read_orders and read_products scopes, and that Bulk queries is enabled under Settings > Access requests for the app in the Dev Dashboard.";
   }
   return `Shopify could not complete the export (${code ?? "unknown error"}). Try again; if it keeps failing, run a full resync.`;
 }
@@ -130,6 +130,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
           since: kind === "full" ? null : store.sync_cursor,
           timezone: info.shop.ianaTimezone as string | null,
           withProducts: hasScope(store.scopes, "products"),
+          allOrders: hasScope(store.scopes, "all_orders"),
         };
       });
 
@@ -141,10 +142,15 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         try {
           data = await gql(env, store.shop, token, BULK_START, { q: buildBulkQuery({ since: prep.since, withProducts: prep.withProducts }) });
         } catch (err) {
-          if (err instanceof ShopifyError && err.code === "ACCESS_DENIED") throw new NonRetryableError(explainBulkFailure("ACCESS_DENIED"));
+          if (err instanceof ShopifyError && err.code === "ACCESS_DENIED") throw new NonRetryableError(explainBulkFailure("ACCESS_DENIED", err.message));
+          // Other GraphQL errors (they carry a code) will not change on retry; HTTP and network errors might.
+          if (err instanceof ShopifyError && err.code && err.code !== "INTERNAL_SERVER_ERROR") {
+            throw new NonRetryableError(`Shopify rejected the export: ${err.message} (${err.code})`);
+          }
           throw err;
         }
-        const result = data.bulkOperationRunQuery;
+        const result = data?.bulkOperationRunQuery;
+        if (!result) throw new Error("Shopify returned no result for the export request");
         if (result.userErrors?.length) {
           throw new NonRetryableError("Shopify rejected the export: " + result.userErrors.map((e: { message: string }) => e.message).join("; "));
         }
@@ -201,10 +207,15 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
 
       // 5. Record success and move the cursor forward.
       await step.do("finish", retry, async () => {
-        const warning =
-          orders > 0 && withAddress === 0
-            ? "Imported, but Shopify returned no address data, so state and country reports will be empty. The app may need protected customer data access for addresses."
-            : null;
+        const warnings: string[] = [];
+        if (orders > 0 && withAddress === 0) {
+          warnings.push("Imported, but Shopify returned no address data, so state and country reports will be empty. The app may need protected customer data access for addresses.");
+        }
+        // `allOrders` is undefined for runs that prepared before this check existed.
+        if (kind === "full" && prep.allOrders === false) {
+          warnings.push("Only the last 60 days of orders were available: add the read_all_orders scope to the app, then run a full resync.");
+        }
+        const warning = warnings.length ? warnings.join(" ") : null;
         await env.DB.prepare("UPDATE stores SET sync_cursor = ? WHERE id = ?").bind(prep.nextCursor, storeId).run();
         await env.DB.prepare("UPDATE sync_runs SET orders = ?, line_items = ? WHERE id = ?").bind(orders, lineItems, runId).run();
         await markRun(env, storeId, runId, "complete", warning);
