@@ -23,7 +23,7 @@ export function Login({ configError, onSignedIn }: { configError: string | null;
   return (
     <div className="center">
       <form className="card login" onSubmit={submit}>
-        <h1>Wheel Insights</h1>
+        <h1>FlightDeck</h1>
         {configError ? (
           <div className="banner error">
             Setup is not finished: {configError} Set it with <code>wrangler secret put</code> and reload.

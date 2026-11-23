@@ -48,7 +48,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
   const exportCsv = () => {
     const head = [label(groupBy), ...(splitBy ? [label(splitBy)] : []), "Units", "Orders", `Revenue (${currency})`, "Line items"];
     downloadCsv(
-      `wheel-insights-${groupBy.replace(/[^a-z0-9]+/gi, "-")}${splitBy ? "-by-" + splitBy.replace(/[^a-z0-9]+/gi, "-") : ""}.csv`,
+      `flightdeck-${groupBy.replace(/[^a-z0-9]+/gi, "-")}${splitBy ? "-by-" + splitBy.replace(/[^a-z0-9]+/gi, "-") : ""}.csv`,
       head,
       sorted.map((r) => [r.g1, ...(splitBy ? [r.g2] : []), r.units, r.orders, r.revenue, r.line_items]),
     );
