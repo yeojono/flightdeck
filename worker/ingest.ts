@@ -1,3 +1,5 @@
+import { normColumn } from "./values";
+
 /**
  * Turns Shopify bulk-export JSONL into rows and writes them to D1.
  *
@@ -112,7 +114,7 @@ export function parseJsonl(text: string, dayOf: (iso: string) => string): Parsed
         const value = String(attr?.value ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_VALUE_LENGTH);
         if (!key || !value || seen.has(key)) continue;
         seen.add(key);
-        out.props.push([id, key, value, orderId]);
+        out.props.push([id, key, value, orderId, normColumn(value)]);
       }
     }
   }
@@ -137,8 +139,8 @@ export const INSERT_LINE_ITEMS = `INSERT OR REPLACE INTO line_items
   SELECT ?1, ${cols(12)} FROM json_each(?2)`;
 
 export const INSERT_PROPS = `INSERT OR REPLACE INTO line_item_props
-  (store_id, line_item_id, key, value, order_id)
-  SELECT ?1, ${cols(4)} FROM json_each(?2)`;
+  (store_id, line_item_id, key, value, order_id, norm)
+  SELECT ?1, ${cols(5)} FROM json_each(?2)`;
 
 export const DELETE_ORDER_PROPS = `DELETE FROM line_item_props WHERE store_id = ?1 AND order_id IN (SELECT value FROM json_each(?2))`;
 export const DELETE_ORDER_LINES = `DELETE FROM line_items WHERE store_id = ?1 AND order_id IN (SELECT value FROM json_each(?2))`;

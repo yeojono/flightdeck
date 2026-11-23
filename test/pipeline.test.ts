@@ -17,6 +17,8 @@ import {
 } from "../worker/ingest";
 import { type ReportRequest, buildReport } from "../worker/report";
 import { buildBulkQuery, hasScope, normaliseShop } from "../worker/shopify";
+import { normaliseValue } from "../worker/values";
+import { suggestWordGroups } from "../src/grouping";
 
 const db = new DatabaseSync(":memory:");
 const numbered = (sql: string) => sql; // node:sqlite understands ?1 / ?2 like D1 does
@@ -64,14 +66,17 @@ function expectedByAttr(jsonl: string, key: string) {
       if (!o.cancelledAt && !o.test) live.add(o.id);
     } else if (live.has(o.__parentId)) {
       const v = o.customAttributes.find((a: any) => normaliseKey(a.key) === key)?.value;
-      if (v) out.set(v.toLowerCase(), (out.get(v.toLowerCase()) ?? 0) + o.currentQuantity);
+      const k = v && normaliseValue(v).toLowerCase();
+      if (k) out.set(k, (out.get(k) ?? 0) + o.currentQuantity);
     }
   }
   return out;
 }
 
 beforeAll(() => {
-  db.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql"]) {
+    db.exec(readFileSync(new URL(`../migrations/${m}`, import.meta.url), "utf8"));
+  }
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc, currency, fx_rate) VALUES
     (1, 'au', 'AU store', 'x', 'x', 'AUD', 1), (2, 'us', 'US store', 'x', 'x', 'USD', 1.5)`);
   expect(ingest(1, AU, "Australia/Sydney")).toBe(400);
