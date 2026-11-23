@@ -99,7 +99,12 @@ export async function gql<T = any>(env: Env, shop: string, token: string, query:
         await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
         continue;
       }
-      if (!body.data) throw new ShopifyError(body.errors.map((e) => e.message).join("; "), body.errors[0].extensions?.code);
+      // Shopify can return errors alongside `data` whose top-level fields are null (for example an access error
+      // on a mutation). Treat that as a failure so the caller sees Shopify's message instead of a null.
+      const data = body.data as Record<string, unknown> | null | undefined;
+      if (!data || Object.values(data).some((v) => v === null)) {
+        throw new ShopifyError(body.errors.map((e) => e.message).join("; "), body.errors[0].extensions?.code);
+      }
     }
     return body.data as T;
   }
