@@ -32,11 +32,11 @@
   "vars": {
     "SHOPIFY_API_VERSION": "2026-10",
     // Bytes of the Shopify export processed per workflow step.
-    "INGEST_CHUNK_BYTES": "4000000"
-    // Required for sign-in (see "Protect it with Cloudflare Access" in the README). Until they are
-    // set, the app's sign-in page shows the values to paste here:
-    // "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
-    // "ACCESS_AUD": "the Access application's AUD tag"
+    "INGEST_CHUNK_BYTES": "4000000",
+    // Required for sign-in (see "Protect it with Cloudflare Access" in the README): the Zero Trust
+    // team domain and the Access application's AUD tag. Not secret.
+    "ACCESS_TEAM_DOMAIN": "ride-wingman.cloudflareaccess.com",
+    "ACCESS_AUD": "808d629362b15887b2a1bc6b91ec57870cea7808659c6c64f3810c22c65a57b0"
   },
 
   // Sign-in is Cloudflare Access (Workers & Pages > flightdeck > Access). This block only applies to local
