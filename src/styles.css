@@ -745,3 +745,33 @@ table {
 .nowrap {
   white-space: nowrap;
 }
+
+/* Combine values (Attributes page) */
+.hint.top {
+  margin: 0 0 12px;
+}
+.banner.suggestion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  flex-wrap: wrap;
+}
+.banner.suggestion .actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.combine-bar {
+  flex-wrap: wrap;
+  min-height: 36px;
+  margin-bottom: 8px;
+}
+.combine-bar .control {
+  max-width: 260px;
+}
+.data td.tick,
+.data th:first-child:empty {
+  width: 1%;
+  padding-right: 0;
+}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { type AttributeKey, type Dimension, api } from "../api";
+import { CombineValues } from "../components/CombineValues";
 import type { AppContext } from "../App";
 
 interface Sample {
@@ -7,20 +8,31 @@ interface Sample {
   line_items: number;
 }
 
+/** Other words property keys use for an attribute, by lower-case attribute name. */
+const ALSO_CALLED: Record<string, string[]> = { freehub: ["driver"] };
+
 /**
- * Suggests an attribute for a property key when an attribute name appears in it.
+ * Suggests an attribute for a property key when an attribute name (or another word for it) appears in it.
+ * A match inside a longer one is ignored, so "freehub" suggests Freehub rather than Hub.
  * If several match ("hub colour"), the one named last wins, since that is usually what the value describes.
  */
 function suggest(key: string, dims: Dimension[]): number | null {
   const k = key.replace(/color/g, "colour");
-  let best: { id: number; at: number } | null = null;
+  const hits: Array<{ id: number; at: number; end: number }> = [];
   for (const d of dims) {
     const n = d.name.toLowerCase().replace(/color/g, "colour");
-    let at = k.lastIndexOf(n);
-    if (at === -1 && n === "wheel size") at = k.search(/\b(size|diameter)\b/);
-    if (at !== -1 && (!best || at > best.at)) best = { id: d.id, at };
+    for (const word of [n, ...(ALSO_CALLED[n] ?? [])]) {
+      const at = k.lastIndexOf(word);
+      if (at !== -1) hits.push({ id: d.id, at, end: at + word.length });
+    }
+    if (n === "wheel size" && !hits.some((h) => h.id === d.id)) {
+      const m = k.match(/\b(size|diameter)\b/);
+      if (m?.index !== undefined) hits.push({ id: d.id, at: m.index, end: m.index + m[0].length });
+    }
   }
-  return best?.id ?? null;
+  const kept = hits.filter((h) => !hits.some((o) => o !== h && o.at <= h.at && o.end >= h.end && o.end - o.at > h.end - h.at));
+  kept.sort((a, b) => b.at - a.at || b.end - a.end);
+  return kept[0]?.id ?? null;
 }
 
 export function Attributes({ reloadMeta }: AppContext) {
@@ -199,6 +211,8 @@ export function Attributes({ reloadMeta }: AppContext) {
         )}
         <p className="hint">Unmapped properties can still be used in Explore under “Unmapped properties”. If a line item has two keys mapped to the same attribute, one of them is used.</p>
       </section>
+
+      {keys !== null && <CombineValues dims={dims} keys={keys} />}
     </div>
   );
 }

@@ -9,6 +9,7 @@ It runs entirely on Cloudflare: one Worker serves the React dashboard and the AP
 - **Overview** - headline numbers, sales over time, and a top-values chart for each attribute, country and state.
 - **Explore** - pick a metric (units, orders, revenue), group by any attribute or field, optionally split by a second one, and view it as a chart, a heatmap (for example rim x hub) or a table. Filter by date, store, country, state and any attribute. Export to CSV.
 - **Attributes** - map each store’s property keys ("Rim", "Rim Choice", "Select your rim") to one shared attribute so stores line up.
+  Values that differ only in case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in, 27.5) are combined automatically, and you can combine others yourself (for example show "Mullet Set" as "Mullet"). The app suggests these when several values differ by the same word.
 - **Stores** - connect stores, see sync status, set currency conversion rates.
 
 ## Requirements
@@ -62,6 +63,10 @@ If you would rather create the Access application yourself in Zero Trust (by hos
 ### Upgrading from the password version
 
 Run `pnpm run db:migrate` (it drops the old sign-in rate-limit table), set up Access as above, deploy, then remove the old secret with `pnpm exec wrangler secret delete ADMIN_PASSWORD`. Keep `APP_SECRET` exactly as it is.
+
+### Upgrading to value grouping
+
+Run `pnpm run db:migrate` before deploying. It adds the column for cleaned values, the table for values you combine, and a **Freehub** attribute that the `freehub` and `driver` keys both feed (unless you had already mapped them). Values imported earlier are cleaned the first time the app loads after the deploy, so that first load may take a few seconds longer. No resync is needed.
 
 ## 2. Create the Shopify app (Dev Dashboard)
 

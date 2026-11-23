@@ -7,6 +7,8 @@
  *   - prop:<key>  a raw line item property key
  */
 
+import { normaliseValue } from "./values";
+
 export interface ReportFilter {
   dim: string;
   values: string[];
@@ -89,10 +91,12 @@ function compose(req: ReportRequest, withGroups: boolean): { sql: string; params
     if (id.startsWith("dim:")) {
       const dimId = Number(id.slice(4));
       if (!Number.isInteger(dimId)) throw new ReportError(`Unknown dimension ${id}`);
-      sql = `(SELECT p.value FROM line_item_props p JOIN dimension_keys k ON k.key = p.key
+      // The cleaned value, or the label it was combined under on the Attributes page.
+      sql = `(SELECT COALESCE(g.label, p.norm, p.value) FROM line_item_props p JOIN dimension_keys k ON k.key = p.key
+              LEFT JOIN value_groups g ON g.dimension_id = k.dimension_id AND g.value = COALESCE(p.norm, p.value)
               WHERE p.store_id = li.store_id AND p.line_item_id = li.id AND k.dimension_id = ${bind(dimId)} LIMIT 1)`;
     } else if (id.startsWith("prop:")) {
-      sql = `(SELECT p.value FROM line_item_props p
+      sql = `(SELECT COALESCE(p.norm, p.value) FROM line_item_props p
               WHERE p.store_id = li.store_id AND p.line_item_id = li.id AND p.key = ${bind(id.slice(5))})`;
     } else {
       const b = BUILTIN_DIMS.find((d) => d.id === id);
@@ -122,7 +126,10 @@ function compose(req: ReportRequest, withGroups: boolean): { sql: string; params
   }
   for (const f of req.filters ?? []) {
     if (!f?.values?.length) continue;
-    where.push(`${expr(f.dim)} COLLATE NOCASE IN (SELECT value FROM json_each(${bind(JSON.stringify(f.values.map(String)))}))`);
+    // Attribute values are matched as typed and as cleaned, so a saved filter for 29" still finds 29.
+    const values = f.values.map(String);
+    if (isAttributeDim(f.dim)) values.push(...values.map(normaliseValue));
+    where.push(`${expr(f.dim)} COLLATE NOCASE IN (SELECT value FROM json_each(${bind(JSON.stringify([...new Set(values)]))}))`);
   }
   for (const id of groupBy) {
     if (isAttributeDim(id) && !req.includeMissing) where.push(`${expr(id)} IS NOT NULL`);

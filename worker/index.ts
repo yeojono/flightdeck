@@ -3,6 +3,7 @@ import { requireAccess, sessionStatus } from "./auth";
 import { encrypt } from "./crypto";
 import type { Env, StoreRow } from "./env";
 import { normaliseKey } from "./ingest";
+import { ensureNormalised, normaliseValue } from "./values";
 import { BUILTIN_DIMS, ReportError, type ReportRequest, buildReport } from "./report";
 import { SHOP_INFO, ShopifyError, gql, hasScope, normaliseShop, requestToken } from "./shopify";
 import { SyncWorkflow, startSync } from "./sync";
@@ -146,7 +147,7 @@ app.get("/api/attributes", async (c) => {
   const [dims, keys] = await c.env.DB.batch([
     c.env.DB.prepare("SELECT id, name, sort FROM dimensions ORDER BY sort, name"),
     c.env.DB.prepare(
-      `SELECT p.key, COUNT(*) AS line_items, COUNT(DISTINCT p.store_id) AS stores, COUNT(DISTINCT p.value) AS distinct_values,
+      `SELECT p.key, COUNT(*) AS line_items, COUNT(DISTINCT p.store_id) AS stores, COUNT(DISTINCT lower(COALESCE(p.norm, p.value))) AS distinct_values,
               k.dimension_id
        FROM line_item_props p LEFT JOIN dimension_keys k ON k.key = p.key
        GROUP BY p.key ORDER BY line_items DESC LIMIT 500`,
@@ -163,7 +164,8 @@ app.get("/api/attributes", async (c) => {
 app.get("/api/attributes/values", async (c) => {
   const key = normaliseKey(c.req.query("key"));
   const { results } = await c.env.DB.prepare(
-    `SELECT MIN(value) AS value, COUNT(*) AS line_items FROM line_item_props WHERE key = ? GROUP BY value COLLATE NOCASE ORDER BY line_items DESC LIMIT 12`,
+    `SELECT MIN(COALESCE(norm, value)) AS value, COUNT(*) AS line_items FROM line_item_props WHERE key = ?
+     GROUP BY COALESCE(norm, value) COLLATE NOCASE ORDER BY line_items DESC LIMIT 12`,
   )
     .bind(key)
     .all();
@@ -202,15 +204,61 @@ app.patch("/api/dimensions/:id", async (c) => {
 app.delete("/api/dimensions/:id", async (c) => {
   const id = Number(c.req.param("id"));
   await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM value_groups WHERE dimension_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM dimension_keys WHERE dimension_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM dimensions WHERE id = ?").bind(id),
   ]);
   return c.json({ ok: true });
 });
 
+const MAX_VALUES = 300;
+
+/** Every value of an attribute (after cleaning), with what it is shown as if it was combined with others. */
+app.get("/api/dimensions/:id/values", async (c) => {
+  const id = Number(c.req.param("id"));
+  const { results } = await c.env.DB.prepare(
+    `SELECT MIN(COALESCE(p.norm, p.value)) AS value, COUNT(*) AS line_items, MIN(g.label) AS label
+     FROM line_item_props p JOIN dimension_keys k ON k.key = p.key AND k.dimension_id = ?1
+     LEFT JOIN value_groups g ON g.dimension_id = ?1 AND g.value = COALESCE(p.norm, p.value)
+     GROUP BY COALESCE(p.norm, p.value) COLLATE NOCASE ORDER BY line_items DESC LIMIT ${MAX_VALUES + 1}`,
+  )
+    .bind(id)
+    .all();
+  return c.json({ values: results.slice(0, MAX_VALUES), more: results.length > MAX_VALUES });
+});
+
+/** Shows the given values of an attribute as one label in reports, or (label null) shows them as themselves again. */
+app.put("/api/dimensions/:id/groups", async (c) => {
+  const id = Number(c.req.param("id"));
+  const body = await c.req.json<{ values?: unknown[]; label?: string | null }>();
+  const values = [...new Set((body.values ?? []).map((v) => normaliseValue(String(v ?? ""))).filter(Boolean))].slice(0, 1000);
+  if (!values.length) return c.json({ error: "Pick at least one value" }, 400);
+  const label = body.label == null ? null : String(body.label).replace(/\s+/g, " ").trim().slice(0, 500);
+  if (label === "") return c.json({ error: "Enter a name to show them as" }, 400);
+  if (!(await c.env.DB.prepare("SELECT 1 FROM dimensions WHERE id = ?").bind(id).first())) return c.json({ error: "Attribute not found" }, 404);
+  const json = JSON.stringify(values);
+  if (label === null) {
+    await c.env.DB.prepare("DELETE FROM value_groups WHERE dimension_id = ?1 AND value IN (SELECT value FROM json_each(?2))").bind(id, json).run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO value_groups (dimension_id, value, label) SELECT ?1, value, ?3 FROM json_each(?2) WHERE true
+       ON CONFLICT (dimension_id, value) DO UPDATE SET label = excluded.label`,
+    )
+      .bind(id, json, label)
+      .run();
+  }
+  return c.json({ ok: true });
+});
+
 // ---------- Reporting ----------
 
 app.get("/api/meta", async (c) => {
+  // One-off: clean up attribute values imported before value cleaning existed (or before its rules last changed).
+  try {
+    await ensureNormalised(c.env.DB);
+  } catch (e) {
+    console.error("Cleaning attribute values failed; reports still work, with less merging.", e);
+  }
   const [dims, props, range, settings, stores] = await c.env.DB.batch([
     c.env.DB.prepare(
       `SELECT d.id, d.name, (SELECT COUNT(*) FROM dimension_keys k WHERE k.dimension_id = d.id) AS keys FROM dimensions d ORDER BY d.sort, d.name`,
