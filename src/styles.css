@@ -470,6 +470,16 @@ button:disabled {
 .login p {
   margin: 0;
 }
+.login pre {
+  margin: 0;
+  padding: 10px 12px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--hover);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
 
 /* Multi-select filter */
 .ms {

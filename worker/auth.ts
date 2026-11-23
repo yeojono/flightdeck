@@ -1,5 +1,5 @@
 import type { Context, Next } from "hono";
-import { verifyAccessJwt } from "./access";
+import { peekAccessJwt, verifyAccessJwt } from "./access";
 import type { Env } from "./env";
 
 // Sign-in is done by Cloudflare Access in front of the Worker. Every /api/* request must have
@@ -14,10 +14,11 @@ interface Identity {
 /**
  * Returns who is signed in, or null if the request did not come through Cloudflare Access.
  *
- * Primary: Access configured on the Worker itself (Workers & Pages > the Worker > Access), which the
- * runtime exposes as ctx.access. It cannot be set by the client.
- * Fallback: an Access application configured in Zero Trust by hostname. Then the Worker checks
- * the signed JWT Access adds, using ACCESS_TEAM_DOMAIN and ACCESS_AUD.
+ * 1. ctx.access, set by the runtime when Access authenticated the request. Cloudflare does not
+ *    pass it to Workers that serve static assets (like this one), so in practice it is usually
+ *    missing; it is checked first in case that changes.
+ * 2. The signed JWT Access adds to every request (Cf-Access-Jwt-Assertion), verified against
+ *    ACCESS_TEAM_DOMAIN and ACCESS_AUD. This is what normally signs people in.
  */
 async function identify(c: Ctx, withEmail: boolean): Promise<Identity | null> {
   const access = (c.executionCtx as ExecutionContext).access;
@@ -47,7 +48,22 @@ export async function requireAccess(c: Ctx, next: Next) {
   await next();
 }
 
+/**
+ * When Access is in front of the Worker but ACCESS_TEAM_DOMAIN / ACCESS_AUD are not set, the
+ * sign-in screen shows the values from the visitor's own (unverified) token to copy into
+ * wrangler.jsonc. This grants nothing: the API stays closed until the values are deployed.
+ */
+function accessSetupHint(c: Ctx) {
+  if (c.env.ACCESS_TEAM_DOMAIN && c.env.ACCESS_AUD) return null;
+  return peekAccessJwt(c.req.header("Cf-Access-Jwt-Assertion"));
+}
+
 export async function sessionStatus(c: Ctx) {
   const id = await identify(c, true);
-  return c.json({ signedIn: !!id, email: id?.email ?? null, configError: configProblem(c.env) });
+  return c.json({
+    signedIn: !!id,
+    email: id?.email ?? null,
+    configError: configProblem(c.env),
+    accessSetup: id ? null : accessSetupHint(c),
+  });
 }

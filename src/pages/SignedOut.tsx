@@ -1,4 +1,9 @@
-export function SignedOut({ configError }: { configError: string | null }) {
+export interface AccessSetup {
+  teamDomain: string;
+  aud: string;
+}
+
+export function SignedOut({ configError, accessSetup }: { configError: string | null; accessSetup: AccessSetup | null }) {
   return (
     <div className="center">
       <div className="card login">
@@ -7,6 +12,22 @@ export function SignedOut({ configError }: { configError: string | null }) {
           <div className="banner error">
             Setup is not finished: {configError} Set it with <code>wrangler secret put</code> and reload.
           </div>
+        ) : accessSetup ? (
+          <>
+            <p className="muted">
+              Cloudflare Access let you through, but the Worker cannot check your sign-in yet. Add these two values to <code>vars</code> in{" "}
+              <code>wrangler.jsonc</code> and deploy again:
+            </p>
+            <pre>
+              {`"ACCESS_TEAM_DOMAIN": "${accessSetup.teamDomain}",\n"ACCESS_AUD": "${accessSetup.aud}"`}
+            </pre>
+            <p className="muted">
+              Check the team domain is yours (Zero Trust &gt; Settings). These values are not secret. See “Protect it with Cloudflare Access” in the README.
+            </p>
+            <button className="primary" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </>
         ) : (
           <>
             <p className="muted">
