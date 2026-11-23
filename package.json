@@ -1,0 +1,38 @@
+{
+  "name": "wheel-insights",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.worker.json && tsc -p tsconfig.app.json",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply wheel-insights --local",
+    "db:migrate": "wrangler d1 migrations apply wheel-insights --remote",
+    "deploy": "vite build && wrangler deploy",
+    "mock:shopify": "node scripts/mock-shopify.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.20",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "recharts": "^3.11.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.70.1",
+    "@cloudflare/workers-types": "^5.20261122.2",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "description": "Multi-store Shopify sales analytics by line item property, on Cloudflare Workers"
+}
