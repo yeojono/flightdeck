@@ -36,7 +36,7 @@ function ingest(storeId: number, jsonl: string, tz: string, chunkBytes = 50_000)
     const ids = JSON.stringify(p.orderIds);
     db.prepare(numbered(DELETE_ORDER_PROPS)).run(storeId, ids);
     db.prepare(numbered(DELETE_ORDER_LINES)).run(storeId, ids);
-    db.prepare(numbered(INSERT_ORDERS)).run(storeId, JSON.stringify(p.orders));
+    db.prepare(numbered(INSERT_ORDERS)).run(storeId, JSON.stringify(p.orders), 1);
     db.prepare(numbered(INSERT_LINE_ITEMS)).run(storeId, JSON.stringify(p.lineItems));
     db.prepare(numbered(INSERT_PROPS)).run(storeId, JSON.stringify(p.props));
     orders += p.orders.length;
@@ -74,7 +74,7 @@ function expectedByAttr(jsonl: string, key: string) {
 }
 
 beforeAll(() => {
-  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql"]) {
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) {
     db.exec(readFileSync(new URL(`../migrations/${m}`, import.meta.url), "utf8"));
   }
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc, currency, fx_rate) VALUES
@@ -82,7 +82,7 @@ beforeAll(() => {
   expect(ingest(1, AU, "Australia/Sydney")).toBe(400);
   expect(ingest(2, US, "America/Denver")).toBe(300);
   // Rim = "rim" (AU) + "rim choice" (US); Colour = "hub colour" (AU) + "hub color" (US)
-  db.exec(`INSERT INTO dimension_keys (key, dimension_id) VALUES
+  db.exec(`INSERT OR IGNORE INTO dimension_keys (key, dimension_id) VALUES
     ('rim', 1), ('rim choice', 1), ('hub', 2), ('hub choice', 2), ('hub colour', 3), ('hub color', 3), ('wheel size', 4)`);
 });
 
@@ -109,6 +109,7 @@ describe("helpers", () => {
     expect(q).toContain(`orders(query: "updated_at:>='2026-11-01T00:00:00Z'")`);
     expect(q).toContain("customAttributes { key value }");
     expect(q).not.toContain("productType");
+    expect(q).not.toContain("tags");
   });
 });
 
@@ -155,7 +156,7 @@ describe("report", () => {
   });
 
   it("filters by attribute value and date range", () => {
-    const r = report({ groupBy: ["month"], filters: [{ dim: "dim:4", values: ['29"'] }], from: "2026-01-01", to: "2026-06-30" });
+    const r = report({ groupBy: ["month"], filters: [{ dim: "dim:4", values: ['29" Set'] }], from: "2026-01-01", to: "2026-06-30" });
     expect(r.rows.length).toBe(6);
     expect(r.rows.map((x) => x.g1)).toEqual([...r.rows.map((x) => x.g1)].sort());
     expect(r.rows.every((x) => x.g1 >= "2026-01" && x.g1 <= "2026-06")).toBe(true);

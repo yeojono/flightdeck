@@ -132,6 +132,9 @@ export function Stores({ meta, reloadMeta }: AppContext) {
                     <td>
                       <StatusBadge status={s.last_sync_status} />
                       {s.last_sync_error && <div className="small error-text">{s.last_sync_error}</div>}
+                      {!!s.needs_resync && !ACTIVE.has(s.last_sync_status ?? "") && s.last_sync_status !== "running" && (
+                        <div className="small muted">Import settings changed: the next sync re-imports every order.</div>
+                      )}
                     </td>
                     <td>{when(s.last_sync_at)}</td>
                     <td className="num">
@@ -156,7 +159,7 @@ export function Stores({ meta, reloadMeta }: AppContext) {
                       </button>
                       <button
                         className="link"
-                        onClick={() => window.confirm(`Re-import every order for ${s.label}? Existing data for this store is replaced.`) && act(() => api(`/stores/${s.id}/sync`, { body: { full: true } }))}
+                        onClick={() => window.confirm(`Re-import every order for ${s.label}? Its data stays visible while this runs, then anything no longer in Shopify is removed.`) && act(() => api(`/stores/${s.id}/sync`, { body: { full: true } }))}
                       >
                         Full resync
                       </button>
@@ -188,7 +191,15 @@ export function Stores({ meta, reloadMeta }: AppContext) {
             maintain, not live exchange rates, so treat combined revenue as approximate.
           </p>
         )}
-        <p className="hint">Stores sync automatically every 6 hours.</p>
+        <p className="hint">
+          Stores sync automatically every 6 hours.
+          {meta.orderTag && (
+            <>
+              {" "}
+              Only orders tagged <strong>{meta.orderTag}</strong> in Shopify are imported. An order that loses the tag is removed at the next sync.
+            </>
+          )}
+        </p>
       </section>
 
       <section className="card">

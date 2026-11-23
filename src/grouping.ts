@@ -13,8 +13,14 @@ export interface WordSuggestion {
 }
 
 /**
- * Finds words that several values differ by and nothing else, such as "Set" in
- * "29 Set" / "29" and "Mullet Set" / "Mullet". A word is suggested only when it
+ * Words that change what a value is, however often they are the only difference:
+ * "29 Set" is a pair of wheels and "29" is one wheel.
+ */
+const MEANINGFUL = new Set(["set", "front", "rear", "boost"]);
+
+/**
+ * Finds words that several values differ by and nothing else, such as "Matte" in
+ * "Black Matte" / "Black" and "Red Matte" / "Red". A word is suggested only when it
  * separates at least two pairs, so a one-off difference is not treated as noise.
  */
 export function suggestWordGroups(values: DimValue[], minPairs = 2): WordSuggestion[] {
@@ -31,6 +37,7 @@ export function suggestWordGroups(values: DimValue[], minPairs = 2): WordSuggest
       const to = shown.get(rest);
       if (to === undefined || to.toLowerCase() === v.value.toLowerCase()) continue;
       const key = words[i].toLowerCase();
+      if (MEANINGFUL.has(key)) continue;
       const s = byWord.get(key) ?? { word: words[i], pairs: [] };
       s.pairs.push({ from: v.value, to });
       byWord.set(key, s);

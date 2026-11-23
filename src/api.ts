@@ -3,18 +3,24 @@ export interface Dim {
   label: string;
   group: string;
   mapped: boolean;
+  /** Some line items have no value for it (attributes, wheel type). */
+  optional?: boolean;
 }
 export interface StoreSummary {
   id: number;
   label: string;
   currency: string | null;
   fx_rate: number;
+  /** Imported before the current tag or cleaning rules: its next sync re-imports everything. */
+  needs_resync: number;
 }
 export interface Meta {
   dimensions: Dim[];
   stores: StoreSummary[];
   range: { first_day: string | null; last_day: string | null; orders: number };
   reportingCurrency: string;
+  /** Only orders with this Shopify tag are imported. Null imports every order. */
+  orderTag: string | null;
 }
 export interface ReportFilter {
   dim: string;
@@ -60,6 +66,7 @@ export interface Store {
   last_sync_error: string | null;
   order_count: number;
   first_day: string | null;
+  needs_resync: number;
 }
 export interface Run {
   id: number;

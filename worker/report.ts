@@ -8,6 +8,7 @@
  */
 
 import { normaliseValue } from "./values";
+import { NOT_A_WHEEL, SET_WORDS } from "./wheels";
 
 export interface ReportFilter {
   dim: string;
@@ -35,7 +36,8 @@ export interface BuiltQuery {
 
 export const TIME_DIMS = ["day", "week", "month", "quarter", "year"] as const;
 
-export const BUILTIN_DIMS: Array<{ id: string; label: string; group: string; sql: string }> = [
+/** `optional` dimensions have no value for some line items, which are left out when grouping unless asked for. */
+export const BUILTIN_DIMS: Array<{ id: string; label: string; group: string; sql: string; optional?: boolean }> = [
   { id: "store", label: "Store", group: "Order", sql: "s.label" },
   { id: "country", label: "Country", group: "Location", sql: "COALESCE(o.country, o.country_code, '(unknown)')" },
   {
@@ -43,6 +45,14 @@ export const BUILTIN_DIMS: Array<{ id: string; label: string; group: string; sql
     label: "State / province",
     group: "Location",
     sql: "CASE WHEN o.province IS NULL AND o.province_code IS NULL THEN '(unknown)' ELSE COALESCE(o.province, o.province_code) || ', ' || COALESCE(o.country_code, '') END",
+  },
+  {
+    // Set at import from the product title and variant (see wheels.ts). Add-ons and parts have none.
+    id: "wheel_type",
+    label: "Wheel type",
+    group: "Product",
+    sql: "CASE li.wheel_kind WHEN 'set' THEN 'Wheelset' WHEN 'single' THEN 'Single wheel' WHEN 'rebuild' THEN 'Rebuild' END",
+    optional: true,
   },
   { id: "product", label: "Product", group: "Product", sql: "COALESCE(li.title, '(untitled)')" },
   { id: "variant", label: "Product variant", group: "Product", sql: "COALESCE(li.title, '(untitled)') || CASE WHEN li.variant_title IS NULL OR li.variant_title = '' THEN '' ELSE ' / ' || li.variant_title END" },
@@ -63,13 +73,16 @@ export const BUILTIN_DIMS: Array<{ id: string; label: string; group: string; sql
  * store says it consistently ("... Wheelset", "... Wheels (Front + Rear)", "... Rear Wheel",
  * "... Wheel (Rear Only)"). Services and add-ons that mention wheels (rebuilds, wheel shells,
  * "per wheel" upgrades, deposits, shipping) count as 0. SQLite LIKE ignores case.
+ *
+ * wheelKind in wheels.ts is the same rule run at import (2 is its "set", 1 its "single"), which is
+ * what the Wheel type dimension shows. Change the two together.
  */
 const WHEEL_TEXT = "(COALESCE(li.title, '') || ' ' || COALESCE(li.variant_title, ''))";
 const has = (...words: string[]) => "(" + words.map((w) => `${WHEEL_TEXT} LIKE '%${w}%'`).join(" OR ") + ")";
 export const WHEELS_PER_UNIT = `(CASE
       WHEN NOT ${has("wheel")} THEN 0
-      WHEN ${has("rebuild", "shell", "per wheel", "upgrade", "deposit", "shipping")} THEN 0
-      WHEN ${has("wheelset", "wheel set")} OR (${has("front")} AND ${has("rear")} AND NOT ${has("only")}) THEN 2
+      WHEN ${has(...NOT_A_WHEEL)} THEN 0
+      WHEN ${has(...SET_WORDS)} OR (${has("front")} AND ${has("rear")} AND NOT ${has("only")}) THEN 2
       WHEN ${has("front", "rear")} THEN 1
       ELSE 0
     END)`;
@@ -79,6 +92,9 @@ export function isTimeDim(id: string): boolean {
 }
 export function isAttributeDim(id: string): boolean {
   return id.startsWith("dim:") || id.startsWith("prop:");
+}
+export function isOptionalDim(id: string): boolean {
+  return isAttributeDim(id) || !!BUILTIN_DIMS.find((d) => d.id === id)?.optional;
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -149,7 +165,7 @@ function compose(req: ReportRequest, withGroups: boolean): { sql: string; params
     where.push(`${expr(f.dim)} COLLATE NOCASE IN (SELECT value FROM json_each(${bind(JSON.stringify([...new Set(values)]))}))`);
   }
   for (const id of groupBy) {
-    if (isAttributeDim(id) && !req.includeMissing) where.push(`${expr(id)} IS NOT NULL`);
+    if (isOptionalDim(id) && !req.includeMissing) where.push(`${expr(id)} IS NOT NULL`);
   }
 
   const metrics = `

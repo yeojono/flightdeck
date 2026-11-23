@@ -7,12 +7,12 @@
  *   - spacing around slashes:                                       29 / 27.5  29/27.5
  *   - quotes wrapped around the whole value:                        "Black"  Black
  *
+ * These rules apply to every property. Rules that depend on which property it is, or on
+ * whether the line item is a wheelset or a single wheel, are in wheels.ts.
+ *
  * The original value is kept in line_item_props.value. The cleaned one is stored in
  * line_item_props.norm only when it differs, so most rows store nothing extra.
  */
-
-/** Bump when normaliseValue changes, so existing rows are cleaned again with the new rules. */
-export const NORM_VERSION = "1";
 
 const DOUBLE_QUOTES = /[“”„‟″ʺ˝〃＂]|′′|’’|''/g;
 const SINGLE_QUOTES = /[‘’‚‛′＇]/g;
@@ -32,36 +32,4 @@ export function normaliseValue(raw: string): string {
     .replace(/\s+/g, " ")
     .trim();
   return v || String(raw).trim();
-}
-
-/** The value to store in line_item_props.norm: the cleaned value, or null when it is unchanged. */
-export function normColumn(value: string): string | null {
-  const n = normaliseValue(value);
-  return n === value ? null : n;
-}
-
-/**
- * Cleans values imported before the current rules existed. Runs once per NORM_VERSION.
- * Only values that contain something the rules can change are read, and only rows whose
- * cleaned value differs are written.
- */
-export async function ensureNormalised(db: D1Database): Promise<void> {
-  const done = await db.prepare("SELECT value FROM settings WHERE key = 'value_norm_version'").first<{ value: string }>();
-  if (done?.value === NORM_VERSION) return;
-
-  const { results } = await db
-    .prepare(`SELECT DISTINCT key, value FROM line_item_props WHERE value GLOB '*[0-9/"'']*' OR value GLOB '*[^ -~]*'`)
-    .all<{ key: string; value: string }>();
-  const stmts: D1PreparedStatement[] = [db.prepare("UPDATE line_item_props SET norm = NULL WHERE norm IS NOT NULL")];
-  for (const r of results) {
-    const norm = normColumn(r.value);
-    if (norm !== null) stmts.push(db.prepare("UPDATE line_item_props SET norm = ?3 WHERE key = ?1 AND value = ?2").bind(r.key, r.value, norm));
-  }
-  // Run the reset first on its own, then the updates in modest batches.
-  await stmts[0].run();
-  for (let i = 1; i < stmts.length; i += 200) await db.batch(stmts.slice(i, i + 200));
-  await db
-    .prepare("INSERT INTO settings (key, value) VALUES ('value_norm_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value")
-    .bind(NORM_VERSION)
-    .run();
 }
