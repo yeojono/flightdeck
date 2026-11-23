@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { login, logout, requireSession, sessionStatus } from "./auth";
+import { requireAccess, sessionStatus } from "./auth";
 import { encrypt } from "./crypto";
 import type { Env, StoreRow } from "./env";
 import { normaliseKey } from "./ingest";
@@ -17,7 +17,7 @@ app.onError((err, c) => {
   return c.json({ error: (err as Error).message || "Something went wrong" }, 500);
 });
 
-// State-changing requests must be JSON from our own pages (the session cookie is SameSite=Strict as well).
+// State-changing requests must be JSON, which a cross-site form or link cannot send without a CORS preflight.
 app.use("/api/*", async (c, next) => {
   if (!["GET", "HEAD"].includes(c.req.method) && !(c.req.header("Content-Type") ?? "").startsWith("application/json")) {
     return c.json({ error: "Expected application/json" }, 415);
@@ -26,9 +26,7 @@ app.use("/api/*", async (c, next) => {
 });
 
 app.get("/api/session", sessionStatus);
-app.post("/api/login", login);
-app.post("/api/logout", logout);
-app.use("/api/*", requireSession);
+app.use("/api/*", requireAccess);
 
 // ---------- Stores ----------
 

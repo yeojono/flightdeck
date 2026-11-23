@@ -133,8 +133,19 @@ select {
 }
 .signout {
   margin-top: auto;
-  text-align: left;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 7px 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+.signout .who {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 main {
   min-width: 0;
@@ -456,18 +467,8 @@ button:disabled {
 .login h1 {
   margin: 0;
 }
-.login label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: var(--text-2);
-}
-.login input {
-  height: 36px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
+.login p {
+  margin: 0;
 }
 
 /* Multi-select filter */

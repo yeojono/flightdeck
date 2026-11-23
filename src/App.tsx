@@ -4,8 +4,8 @@ import { clearOptionCache } from "./components/FilterBar";
 import { DEFAULT_FILTERS, type FilterState, useStored } from "./lib";
 import { Attributes } from "./pages/Attributes";
 import { Explore } from "./pages/Explore";
-import { Login } from "./pages/Login";
 import { Overview } from "./pages/Overview";
+import { SignedOut } from "./pages/SignedOut";
 import { Stores } from "./pages/Stores";
 
 const PAGES = [
@@ -14,6 +14,8 @@ const PAGES = [
   { id: "attributes", label: "Attributes" },
   { id: "stores", label: "Stores" },
 ] as const;
+const LOCAL = ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+
 export type PageId = (typeof PAGES)[number]["id"];
 
 function currentPage(): PageId {
@@ -32,6 +34,7 @@ export interface AppContext {
 export function App() {
   const [session, setSession] = useState<"loading" | "in" | "out">("loading");
   const [configError, setConfigError] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
   const [page, setPage] = useState<PageId>(currentPage);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
@@ -39,10 +42,11 @@ export function App() {
 
   useEffect(() => {
     setUnauthorisedHandler(() => setSession("out"));
-    api<{ signedIn: boolean; configError?: string }>("/session")
+    api<{ signedIn: boolean; email: string | null; configError: string | null }>("/session")
       .then((s) => {
-        setConfigError(s.configError ?? null);
-        setSession(s.signedIn ? "in" : "out");
+        setConfigError(s.configError);
+        setEmail(s.email);
+        setSession(s.signedIn && !s.configError ? "in" : "out");
       })
       .catch(() => setSession("out"));
     const onHash = () => setPage(currentPage());
@@ -63,7 +67,7 @@ export function App() {
   }, []);
 
   if (session === "loading") return <div className="center muted">Loading…</div>;
-  if (session === "out") return <Login configError={configError} onSignedIn={() => setSession("in")} />;
+  if (session === "out") return <SignedOut configError={configError} />;
 
   const ctx: AppContext | null = meta && { meta, reloadMeta, filters, setFilters, go };
   return (
@@ -83,12 +87,15 @@ export function App() {
             </a>
           ))}
         </nav>
-        <button
-          className="link signout"
-          onClick={() => api("/logout", { method: "POST" }).finally(() => setSession("out"))}
-        >
-          Sign out
-        </button>
+        <div className="signout">
+          {email && <div className="muted small who" title={email}>{email}</div>}
+          {/* Cloudflare Access's own sign-out page; it does not exist in local dev. */}
+          {!LOCAL && (
+            <a className="link" href="/cdn-cgi/access/logout">
+              Sign out
+            </a>
+          )}
+        </div>
       </aside>
       <main className="viz-root">
         {metaError && <div className="banner error">{metaError}</div>}

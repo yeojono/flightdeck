@@ -103,10 +103,17 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
     body: init?.body !== undefined ? JSON.stringify(init.body) : init?.method && init.method !== "GET" ? "{}" : undefined,
     signal: init?.signal,
     credentials: "same-origin",
+    // When the Cloudflare Access session expires, Access answers with a redirect to its sign-in page.
+    // Following it from fetch() would fail on CORS, so stop and treat it as signed out instead.
+    redirect: "manual",
   });
+  if (res.type === "opaqueredirect") {
+    onUnauthorised();
+    throw new ApiError("Your sign-in has expired. Reload the page to sign in again.", 401);
+  }
   const data = (await res.json().catch(() => ({}))) as any;
   if (!res.ok) {
-    if (res.status === 401 && path !== "/login") onUnauthorised();
+    if (res.status === 401) onUnauthorised();
     throw new ApiError(data?.error || `Request failed (${res.status})`, res.status);
   }
   return data as T;

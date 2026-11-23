@@ -33,9 +33,21 @@
     "SHOPIFY_API_VERSION": "2026-10",
     // Bytes of the Shopify export processed per workflow step.
     "INGEST_CHUNK_BYTES": "4000000"
+    // Only if you protect the app with a Zero Trust Access application by hostname instead of
+    // the Worker's own Access setting (see README):
+    // "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
+    // "ACCESS_AUD": "the application's AUD tag"
+  },
+
+  // Sign-in is Cloudflare Access (Workers & Pages > flightdeck > Access). This block only applies to local
+  // dev (`npm run dev`), where it pretends every request is signed in as this identity.
+  "access": {
+    "dev": {
+      "aud": "local-dev",
+      "identity": { "email": "dev@localhost" }
+    }
   }
 
-  // Secrets (set with `npx wrangler secret put NAME`, or in .dev.vars locally):
-  //   ADMIN_PASSWORD  - password for signing in to the dashboard
-  //   APP_SECRET      - long random string; encrypts Shopify credentials and signs sessions
+  // Secret (set with `npx wrangler secret put APP_SECRET`, or in .dev.vars locally):
+  //   APP_SECRET - long random string; encrypts the stored Shopify credentials
 }

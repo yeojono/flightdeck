@@ -8,8 +8,11 @@ export interface Env {
   DB: D1Database;
   SYNC: Workflow<SyncParams>;
   ASSETS: Fetcher;
-  ADMIN_PASSWORD: string;
+  /** Encrypts stored Shopify credentials. Never change it once stores are connected. */
   APP_SECRET: string;
+  /** Optional, only for an Access application set up by hostname in Zero Trust (see README). */
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   SHOPIFY_API_VERSION: string;
   INGEST_CHUNK_BYTES?: string;
   /** Local testing only: send all Shopify calls to this origin (see scripts/mock-shopify.mjs). */

@@ -1,5 +1,4 @@
 # Copy to .dev.vars for local development. In production set these with `wrangler secret put`.
-ADMIN_PASSWORD=choose-a-password
 APP_SECRET=a-long-random-string-at-least-32-characters
 
 # Local testing against the fake Shopify server only (npm run mock:shopify). Never set in production.

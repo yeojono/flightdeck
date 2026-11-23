@@ -29,16 +29,31 @@ npm run db:migrate
 
 npm run deploy
 
-# Set the two secrets (you are prompted for each value)
-npx wrangler secret put ADMIN_PASSWORD   # password for signing in to the dashboard
+# Set the secret (you are prompted for the value)
 npx wrangler secret put APP_SECRET       # long random string, e.g. from: openssl rand -base64 32
 ```
 
-`npm run deploy` prints your URL (`https://flightdeck.<your-subdomain>.workers.dev`). Open it and sign in with `ADMIN_PASSWORD`.
+`npm run deploy` prints your URL (`https://flightdeck.<your-subdomain>.workers.dev`).
 
 Keep `APP_SECRET` safe and do not change it later: it encrypts the stored Shopify credentials, so changing it means reconnecting every store.
 
-**Recommended:** put the Worker behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) (Zero Trust) so only your team’s email addresses can reach it at all. The built-in password is a single shared password with basic rate limiting.
+### Protect it with Cloudflare Access
+
+The app has no password of its own. Sign-in is done by [Cloudflare Access](https://developers.cloudflare.com/workers/configuration/cloudflare-access/) in front of the Worker, and the API refuses every request that did not come through Access, so **the dashboard shows "You are not signed in" until you do this:**
+
+1. In the Cloudflare dashboard open **Workers & Pages**, select **flightdeck**, and open its **Access** tab.
+2. Choose **Protect this Worker behind Access**, then **All traffic** (this covers the `workers.dev` URL, preview URLs and any custom domain).
+3. Under the authentication policy, pick **Cloudflare account** to let members of your Cloudflare account in, and/or **Email domain** to let in anyone with a verified email at your domain. Then **Apply Access**.
+
+Open the URL again and Cloudflare asks you to sign in. To let in specific people outside those groups, edit the Access application’s policy in **Zero Trust > Access** (for example, an "Emails" rule listing their addresses). Anyone who can sign in can see and change everything in the app; there are no separate roles.
+
+Access is free for up to 50 users. "Sign out" in the app goes to Access’s sign-out page.
+
+**Alternative:** if you would rather create the Access application yourself in Zero Trust (by hostname, for example on a custom domain), also set `ACCESS_TEAM_DOMAIN` (e.g. `your-team.cloudflareaccess.com`) and `ACCESS_AUD` (the application’s **Application Audience (AUD) Tag**, under its additional settings) in `wrangler.jsonc` vars, and the Worker checks the signed token Access adds to each request.
+
+### Upgrading from the password version
+
+Run `npm run db:migrate` (it drops the old sign-in rate-limit table), set up Access as above, deploy, then remove the old secret with `npx wrangler secret delete ADMIN_PASSWORD`. Keep `APP_SECRET` exactly as it is.
 
 ## 2. Create the Shopify app (Dev Dashboard)
 
@@ -87,12 +102,14 @@ Line item properties can contain whatever customers type (engraving text, notes)
 ## Local development
 
 ```sh
-cp .dev.vars.example .dev.vars     # set a password and secret
+cp .dev.vars.example .dev.vars     # set APP_SECRET
 npm run db:migrate:local
 npm run dev
 ```
 
 To try it without a real store, uncomment `SHOPIFY_ORIGIN_OVERRIDE` in `.dev.vars`, run `npm run mock:shopify` in a second terminal, and connect a store with any domain, Client ID `mock-au` or `mock-us`, and Client secret `mock-secret`. Never set `SHOPIFY_ORIGIN_OVERRIDE` in production.
+
+Local dev skips Cloudflare Access: the `access.dev` block in `wrangler.jsonc` makes every request count as signed in as `dev@localhost`.
 
 `npm test` runs the import and report SQL against SQLite with generated data. `npm run typecheck` checks types.
 
@@ -104,7 +121,8 @@ worker/shopify.ts   client credentials grant, GraphQL client, bulk export query
 worker/sync.ts      the import Workflow (start export, wait, import in chunks)
 worker/ingest.ts    parses the export and writes rows to D1
 worker/report.ts    builds the aggregate SQL behind every chart
-worker/auth.ts      password sign-in and sessions
+worker/auth.ts      Cloudflare Access check on every API request
+worker/access.ts    Access JWT verification (only for a hostname-based Access application)
 migrations/         D1 schema
 src/                React dashboard
 public/             app icon and favicons (icon.svg is the source)
@@ -118,8 +136,9 @@ scripts/            mock Shopify server for local testing
 | `wrangler.jsonc` vars | `SHOPIFY_API_VERSION` | Admin API version (currently `2026-10`). Shopify retires versions after about a year, so bump this occasionally. |
 | `wrangler.jsonc` vars | `INGEST_CHUNK_BYTES` | Bytes of the export processed per Workflow step. |
 | `wrangler.jsonc` triggers | `crons` | Automatic sync schedule. |
-| secret | `ADMIN_PASSWORD` | Dashboard password. |
-| secret | `APP_SECRET` | Encryption and session signing key. |
+| `wrangler.jsonc` vars | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Optional. Only for an Access application set up by hostname in Zero Trust. |
+| `wrangler.jsonc` access | `dev` | The identity used in local dev. Ignored when deployed. |
+| secret | `APP_SECRET` | Encrypts the stored Shopify credentials. |
 
 ## Limits worth knowing
 
