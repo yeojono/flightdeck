@@ -44,12 +44,20 @@ The app has no password of its own. Sign-in is done by [Cloudflare Access](https
 1. In the Cloudflare dashboard open **Workers & Pages**, select **flightdeck**, and open its **Access** tab.
 2. Choose **Protect this Worker behind Access**, then **All traffic** (this covers the `workers.dev` URL, preview URLs and any custom domain).
 3. Under the authentication policy, pick **Cloudflare account** to let members of your Cloudflare account in, and/or **Email domain** to let in anyone with a verified email at your domain. Then **Apply Access**.
+4. Open the app’s URL and sign in. Because this Worker serves static assets, Cloudflare does not hand the sign-in to the Worker directly, so the Worker checks the signed token Access adds to each request instead. It needs two values for that, and until they are set the page shows them to you: copy them into `vars` in `wrangler.jsonc` and deploy again.
 
-Open the URL again and Cloudflare asks you to sign in. To let in specific people outside those groups, edit the Access application’s policy in **Zero Trust > Access** (for example, an "Emails" rule listing their addresses). Anyone who can sign in can see and change everything in the app; there are no separate roles.
+   ```jsonc
+   "ACCESS_TEAM_DOMAIN": "your-team.cloudflareaccess.com",
+   "ACCESS_AUD": "the Access application’s AUD tag"
+   ```
+
+   Check the team domain is yours (**Zero Trust > Settings**). You can also find the AUD tag on the Access application in **Zero Trust > Access > Applications**, under its additional settings, as **Application Audience (AUD) Tag**. Neither value is secret.
+
+To let in specific people outside those groups, edit the Access application’s policy in **Zero Trust > Access** (for example, an "Emails" rule listing their addresses). Anyone who can sign in can see and change everything in the app; there are no separate roles.
 
 Access is free for up to 50 users. "Sign out" in the app goes to Access’s sign-out page.
 
-**Alternative:** if you would rather create the Access application yourself in Zero Trust (by hostname, for example on a custom domain), also set `ACCESS_TEAM_DOMAIN` (e.g. `your-team.cloudflareaccess.com`) and `ACCESS_AUD` (the application’s **Application Audience (AUD) Tag**, under its additional settings) in `wrangler.jsonc` vars, and the Worker checks the signed token Access adds to each request.
+If you would rather create the Access application yourself in Zero Trust (by hostname, for example on a custom domain), skip steps 1 to 3 and set the same two values from that application.
 
 ### Upgrading from the password version
 

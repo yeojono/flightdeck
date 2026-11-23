@@ -5,7 +5,7 @@ import { DEFAULT_FILTERS, type FilterState, useStored } from "./lib";
 import { Attributes } from "./pages/Attributes";
 import { Explore } from "./pages/Explore";
 import { Overview } from "./pages/Overview";
-import { SignedOut } from "./pages/SignedOut";
+import { SignedOut, type AccessSetup } from "./pages/SignedOut";
 import { Stores } from "./pages/Stores";
 
 const PAGES = [
@@ -34,6 +34,7 @@ export interface AppContext {
 export function App() {
   const [session, setSession] = useState<"loading" | "in" | "out">("loading");
   const [configError, setConfigError] = useState<string | null>(null);
+  const [accessSetup, setAccessSetup] = useState<AccessSetup | null>(null);
   const [email, setEmail] = useState<string | null>(null);
   const [page, setPage] = useState<PageId>(currentPage);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -42,9 +43,10 @@ export function App() {
 
   useEffect(() => {
     setUnauthorisedHandler(() => setSession("out"));
-    api<{ signedIn: boolean; email: string | null; configError: string | null }>("/session")
+    api<{ signedIn: boolean; email: string | null; configError: string | null; accessSetup?: AccessSetup | null }>("/session")
       .then((s) => {
         setConfigError(s.configError);
+        setAccessSetup(s.accessSetup ?? null);
         setEmail(s.email);
         setSession(s.signedIn && !s.configError ? "in" : "out");
       })
@@ -67,7 +69,7 @@ export function App() {
   }, []);
 
   if (session === "loading") return <div className="center muted">Loading…</div>;
-  if (session === "out") return <SignedOut configError={configError} />;
+  if (session === "out") return <SignedOut configError={configError} accessSetup={accessSetup} />;
 
   const ctx: AppContext | null = meta && { meta, reloadMeta, filters, setFilters, go };
   return (

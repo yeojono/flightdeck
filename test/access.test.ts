@@ -1,6 +1,6 @@
 // Checks the fallback Cloudflare Access JWT verification against tokens signed with a local key.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { clearAccessKeyCache, teamOrigin, verifyAccessJwt } from "../worker/access";
+import { clearAccessKeyCache, peekAccessJwt, teamOrigin, verifyAccessJwt } from "../worker/access";
 
 const TEAM = "myteam.cloudflareaccess.com";
 const AUD = "aud-tag-123";
@@ -47,6 +47,14 @@ describe("Cloudflare Access JWT", () => {
   it("normalises the team domain", () => {
     expect(teamOrigin("myteam")).toBe("https://myteam.cloudflareaccess.com");
     expect(teamOrigin("https://MyTeam.cloudflareaccess.com/")).toBe("https://myteam.cloudflareaccess.com");
+  });
+
+  it("peeks at the team domain and AUD for the setup screen without verifying", async () => {
+    expect(peekAccessJwt(await sign(good()))).toEqual({ teamDomain: TEAM, aud: AUD });
+    expect(peekAccessJwt(await sign({ ...good(), aud: AUD }))).toEqual({ teamDomain: TEAM, aud: AUD });
+    expect(peekAccessJwt(undefined)).toBeNull();
+    expect(peekAccessJwt("not.a.jwt")).toBeNull();
+    expect(peekAccessJwt(await sign({ ...good(), iss: undefined }))).toBeNull();
   });
 
   it("accepts a valid token and caches the keys", async () => {

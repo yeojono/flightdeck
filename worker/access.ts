@@ -71,6 +71,25 @@ export function clearAccessKeyCache() {
 }
 
 /**
+ * Reads the team domain and AUD tag from an Access token WITHOUT checking its signature.
+ * Only for the setup screen: when ACCESS_TEAM_DOMAIN and ACCESS_AUD are not set yet, this shows
+ * the values the visitor's own token carries, so they can copy them into wrangler.jsonc.
+ * Never use it to decide whether someone is signed in.
+ */
+export function peekAccessJwt(token: string | undefined | null): { teamDomain: string; aud: string } | null {
+  const parts = token?.split(".");
+  if (!parts || parts.length !== 3) return null;
+  try {
+    const claims = b64urlJson(parts[1]) as { aud?: unknown; iss?: unknown };
+    const aud = Array.isArray(claims.aud) ? claims.aud[0] : claims.aud;
+    if (typeof claims.iss !== "string" || typeof aud !== "string") return null;
+    return { teamDomain: claims.iss.replace(/^https?:\/\//, "").replace(/\/.*$/, ""), aud };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns who the request belongs to, or null if the token is missing, forged, expired,
  * or was issued for a different Access application or team.
  */
