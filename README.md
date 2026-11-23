@@ -13,27 +13,27 @@ It runs entirely on Cloudflare: one Worker serves the React dashboard and the AP
 
 ## Requirements
 
-- Node.js 22 or newer.
+- Node.js 22 or newer, and pnpm (run `corepack enable` once to get the version this project pins).
 - A Cloudflare account. **Use the Workers Paid plan** (about US$5/month). The free plan allows only 10 ms of CPU per request, and importing order files needs more than that. I have not tested on the free plan and expect imports to fail there.
 - For each Shopify store: access to the Dev Dashboard of the organisation that owns the store.
 
 ## 1. Deploy to Cloudflare
 
 ```sh
-npm install
-npx wrangler login
+pnpm install
+pnpm exec wrangler login
 
 # Create the database, then paste the database_id it prints into wrangler.jsonc
-npx wrangler d1 create flightdeck
-npm run db:migrate
+pnpm exec wrangler d1 create flightdeck
+pnpm run db:migrate
 
-npm run deploy
+pnpm run deploy
 
 # Set the secret (you are prompted for the value)
-npx wrangler secret put APP_SECRET       # long random string, e.g. from: openssl rand -base64 32
+pnpm exec wrangler secret put APP_SECRET       # long random string, e.g. from: openssl rand -base64 32
 ```
 
-`npm run deploy` prints your URL (`https://flightdeck.<your-subdomain>.workers.dev`).
+`pnpm run deploy` prints your URL (`https://flightdeck.<your-subdomain>.workers.dev`).
 
 Keep `APP_SECRET` safe and do not change it later: it encrypts the stored Shopify credentials, so changing it means reconnecting every store.
 
@@ -53,7 +53,7 @@ Access is free for up to 50 users. "Sign out" in the app goes to Access’s sign
 
 ### Upgrading from the password version
 
-Run `npm run db:migrate` (it drops the old sign-in rate-limit table), set up Access as above, deploy, then remove the old secret with `npx wrangler secret delete ADMIN_PASSWORD`. Keep `APP_SECRET` exactly as it is.
+Run `pnpm run db:migrate` (it drops the old sign-in rate-limit table), set up Access as above, deploy, then remove the old secret with `pnpm exec wrangler secret delete ADMIN_PASSWORD`. Keep `APP_SECRET` exactly as it is.
 
 ## 2. Create the Shopify app (Dev Dashboard)
 
@@ -103,15 +103,15 @@ Line item properties can contain whatever customers type (engraving text, notes)
 
 ```sh
 cp .dev.vars.example .dev.vars     # set APP_SECRET
-npm run db:migrate:local
-npm run dev
+pnpm run db:migrate:local
+pnpm run dev
 ```
 
-To try it without a real store, uncomment `SHOPIFY_ORIGIN_OVERRIDE` in `.dev.vars`, run `npm run mock:shopify` in a second terminal, and connect a store with any domain, Client ID `mock-au` or `mock-us`, and Client secret `mock-secret`. Never set `SHOPIFY_ORIGIN_OVERRIDE` in production.
+To try it without a real store, uncomment `SHOPIFY_ORIGIN_OVERRIDE` in `.dev.vars`, run `pnpm run mock:shopify` in a second terminal, and connect a store with any domain, Client ID `mock-au` or `mock-us`, and Client secret `mock-secret`. Never set `SHOPIFY_ORIGIN_OVERRIDE` in production.
 
 Local dev skips Cloudflare Access: the `access.dev` block in `wrangler.jsonc` makes every request count as signed in as `dev@localhost`.
 
-`npm test` runs the import and report SQL against SQLite with generated data. `npm run typecheck` checks types.
+`pnpm test` runs the import and report SQL against SQLite with generated data. `pnpm run typecheck` checks types.
 
 ## Project layout
 

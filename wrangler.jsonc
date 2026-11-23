@@ -11,7 +11,7 @@
     "run_worker_first": ["/api/*"]
   },
 
-  // Run `npx wrangler d1 create flightdeck` and paste the database_id it prints.
+  // Run `pnpm exec wrangler d1 create flightdeck` and paste the database_id it prints.
   "d1_databases": [
     {
       "binding": "DB",
@@ -40,7 +40,7 @@
   },
 
   // Sign-in is Cloudflare Access (Workers & Pages > flightdeck > Access). This block only applies to local
-  // dev (`npm run dev`), where it pretends every request is signed in as this identity.
+  // dev (`pnpm run dev`), where it pretends every request is signed in as this identity.
   "access": {
     "dev": {
       "aud": "local-dev",
@@ -48,6 +48,6 @@
     }
   }
 
-  // Secret (set with `npx wrangler secret put APP_SECRET`, or in .dev.vars locally):
+  // Secret (set with `pnpm exec wrangler secret put APP_SECRET`, or in .dev.vars locally):
   //   APP_SECRET - long random string; encrypts the stored Shopify credentials
 }

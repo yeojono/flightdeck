@@ -1,8 +1,8 @@
 // A tiny stand-in for Shopify so the whole sync can be exercised locally.
 //
-//   1. npm run mock:shopify
+//   1. pnpm run mock:shopify
 //   2. add SHOPIFY_ORIGIN_OVERRIDE=http://127.0.0.1:8799 to .dev.vars
-//   3. npm run dev, then connect a store with any domain and
+//   3. pnpm run dev, then connect a store with any domain and
 //      client ID "mock-au" or "mock-us", client secret "mock-secret"
 //
 // Never set SHOPIFY_ORIGIN_OVERRIDE in production.
