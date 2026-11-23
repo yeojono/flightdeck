@@ -16,7 +16,7 @@
     {
       "binding": "DB",
       "database_name": "wheel-insights",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "database_id": "67997891-e519-49c6-aadd-86b2f5dae815",
       "migrations_dir": "migrations"
     }
   ],
