@@ -55,6 +55,21 @@ Access is free for up to 50 users. "Sign out" in the app goes to Access’s sign
 
 Run `npm run db:migrate` (it drops the old sign-in rate-limit table), set up Access as above, deploy, then remove the old secret with `npx wrangler secret delete ADMIN_PASSWORD`. Keep `APP_SECRET` exactly as it is.
 
+### Automatic deploys from GitHub
+
+`.github/workflows/deploy.yml` deploys the app every time a commit lands on `main` (and on demand from the repo’s **Actions** tab with **Run workflow**). It installs dependencies, runs the typecheck and tests, applies any new D1 migrations, then builds and deploys. If the typecheck or tests fail, nothing is deployed.
+
+It needs two repository secrets (GitHub repo **Settings > Secrets and variables > Actions > New repository secret**):
+
+| Secret | Where to get it |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard: **Workers & Pages** overview, in the right-hand sidebar (or the account home page, under the account name menu > **Copy account ID**). |
+| `CLOUDFLARE_API_TOKEN` | **My Profile > API Tokens > Create Token**. Start from the **Edit Cloudflare Workers** template, add the permission **Account > D1 > Edit**, and limit it to your account. |
+
+Do the first deploy and the `APP_SECRET` step above by hand; after that, merging to `main` is all it takes. Secrets set with `wrangler secret put` are kept across deploys.
+
+Migrations run automatically before each deploy, so a migration merged to `main` is applied to the live database straight away. Write migrations so the currently deployed code still works after they run (for example, add columns rather than renaming them).
+
 ## 2. Create the Shopify app (Dev Dashboard)
 
 The app authenticates with the **client credentials grant**: it exchanges the app’s Client ID and Client secret for a 24-hour Admin API token and renews it automatically. Shopify only allows this when **the app and the store are in the same organisation**.
@@ -127,6 +142,7 @@ migrations/         D1 schema
 src/                React dashboard
 public/             app icon and favicons (icon.svg is the source)
 scripts/            mock Shopify server for local testing
+.github/workflows/  deploy to Cloudflare on every push to main
 ```
 
 ## Settings
