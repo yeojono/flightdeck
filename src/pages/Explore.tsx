@@ -13,7 +13,6 @@ interface ExploreState {
   includeMissing: boolean;
 }
 const TIME = new Set(["day", "week", "month", "quarter", "year"]);
-const isAttr = (id: string) => id.startsWith("dim:") || id.startsWith("prop:");
 const TABLE_LIMIT = 500;
 
 export function Explore({ meta, filters, setFilters }: AppContext) {
@@ -30,6 +29,8 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
   const view = state.view === "heatmap" && (!splitBy || time) ? "chart" : state.view;
   const label = (id: string) => meta.dimensions.find((d) => d.id === id)?.label ?? id;
   const set = (patch: Partial<ExploreState>) => setState((s) => ({ ...s, ...patch }));
+  // Attributes and wheel type are missing on some line items (a valve has no rim), which are left out unless asked for.
+  const optional = (id: string) => !!meta.dimensions.find((d) => d.id === id)?.optional;
 
   const request = toRequest(filters, { groupBy: splitBy ? [groupBy, splitBy] : [groupBy], includeMissing: state.includeMissing, limit: 20000 });
   const { data, loading, error } = useReport(request);
@@ -118,10 +119,10 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
             Export CSV
           </button>
         </div>
-        {(isAttr(groupBy) || isAttr(splitBy)) && (
+        {(optional(groupBy) || optional(splitBy)) && (
           <label className="check">
             <input type="checkbox" checked={state.includeMissing} onChange={(e) => set({ includeMissing: e.target.checked })} />
-            Include line items that do not have this attribute
+            Include line items that do not have this
           </label>
         )}
 

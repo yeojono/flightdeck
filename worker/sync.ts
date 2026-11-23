@@ -1,8 +1,8 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env, StoreRow, SyncParams } from "./env";
-import { completeLineBytes, makeDayFormatter, parseJsonl, writeParsed } from "./ingest";
-import { BULK_START, BULK_STATUS, SHOP_INFO, ShopifyError, buildBulkQuery, getAccessToken, gql, hasScope } from "./shopify";
+import { type Carry, SWEEP_UNSEEN, completeLineBytes, importScope, makeDayFormatter, parseJsonl, writeParsed } from "./ingest";
+import { BULK_START, BULK_STATUS, SHOP_INFO, ShopifyError, buildBulkQuery, getAccessToken, gql, hasScope, orderTag } from "./shopify";
 
 const ACTIVE = ["queued", "exporting", "importing"];
 const MAX_POLLS = 600;
@@ -15,7 +15,9 @@ async function loadStore(env: Env, id: number): Promise<StoreRow> {
 
 /** Queues a sync for a store unless one is already running. Returns the run id. */
 export async function startSync(env: Env, storeId: number, requested: "full" | "incremental"): Promise<{ runId: number; started: boolean }> {
-  const store = await env.DB.prepare("SELECT id, sync_cursor FROM stores WHERE id = ?").bind(storeId).first<{ id: number; sync_cursor: string | null }>();
+  const store = await env.DB.prepare("SELECT id, sync_cursor, sync_scope FROM stores WHERE id = ?")
+    .bind(storeId)
+    .first<{ id: number; sync_cursor: string | null; sync_scope: string | null }>();
   if (!store) throw new Error("Store not found");
   const active = await env.DB.prepare(
     `SELECT id FROM sync_runs WHERE store_id = ? AND status IN ('queued','exporting','importing')
@@ -25,7 +27,7 @@ export async function startSync(env: Env, storeId: number, requested: "full" | "
     .first<{ id: number }>();
   if (active) return { runId: active.id, started: false };
 
-  const kind = store.sync_cursor ? requested : "full";
+  const kind = store.sync_cursor && store.sync_scope === importScope(env) ? requested : "full";
   const run = await env.DB.prepare("INSERT INTO sync_runs (store_id, kind, status) VALUES (?, ?, 'queued') RETURNING id").bind(storeId, kind).first<{ id: number }>();
   const runId = run!.id;
   try {
@@ -54,10 +56,22 @@ interface ChunkResult {
   orders: number;
   lineItems: number;
   withAddress: number;
+  carry: Carry | null;
+}
+
+interface ChunkInput {
+  storeId: number;
+  runId: number;
+  url: string;
+  start: number;
+  total: number;
+  timezone: string | null;
+  tag: string | null;
+  carry: Carry | null;
 }
 
 /** Downloads one byte range of the export, cut at a line boundary, and writes it to D1. */
-async function importChunk(env: Env, storeId: number, url: string, start: number, total: number, timezone: string | null): Promise<ChunkResult> {
+async function importChunk(env: Env, { storeId, runId, url, start, total, timezone, tag, carry }: ChunkInput): Promise<ChunkResult> {
   let size = Math.max(64_000, Number(env.INGEST_CHUNK_BYTES) || 4_000_000);
   for (;;) {
     const end = Math.min(start + size, total) - 1;
@@ -80,9 +94,9 @@ async function importChunk(env: Env, storeId: number, url: string, start: number
       size *= 4;
       continue;
     }
-    const parsed = parseJsonl(new TextDecoder().decode(buf.subarray(0, usable)), makeDayFormatter(timezone));
-    await writeParsed(env.DB, storeId, parsed);
-    return { next: start + usable, total, orders: parsed.orders.length, lineItems: parsed.lineItems.length, withAddress: parsed.withAddress };
+    const parsed = parseJsonl(new TextDecoder().decode(buf.subarray(0, usable)), makeDayFormatter(timezone), { tag, carry });
+    await writeParsed(env.DB, storeId, runId, parsed);
+    return { next: start + usable, total, orders: parsed.orders.length, lineItems: parsed.lineItems.length, withAddress: parsed.withAddress, carry: parsed.carry };
   }
 }
 
@@ -117,13 +131,6 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         await env.DB.prepare("UPDATE stores SET shop_name = ?, currency = ?, timezone = ? WHERE id = ?")
           .bind(info.shop.name, info.shop.currencyCode, info.shop.ianaTimezone, storeId)
           .run();
-        if (kind === "full") {
-          await env.DB.batch([
-            env.DB.prepare("DELETE FROM line_item_props WHERE store_id = ?").bind(storeId),
-            env.DB.prepare("DELETE FROM line_items WHERE store_id = ?").bind(storeId),
-            env.DB.prepare("DELETE FROM orders WHERE store_id = ?").bind(storeId),
-          ]);
-        }
         return {
           // Overlap by five minutes so nothing updated mid-export is missed next time.
           nextCursor: new Date(Date.now() - 5 * 60 * 1000).toISOString().replace(/\.\d+Z$/, "Z"),
@@ -131,6 +138,8 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
           timezone: info.shop.ianaTimezone as string | null,
           withProducts: hasScope(store.scopes, "products"),
           allOrders: hasScope(store.scopes, "all_orders"),
+          tag: orderTag(env) || null,
+          scope: importScope(env),
         };
       });
 
@@ -140,7 +149,11 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         const token = await getAccessToken(env, store);
         let data: any;
         try {
-          data = await gql(env, store.shop, token, BULK_START, { q: buildBulkQuery({ since: prep.since, withProducts: prep.withProducts }) });
+          // A full resync asks Shopify for tagged orders only. A changes-only sync asks for every changed order
+          // with its tags, so an order that has lost the tag is noticed and removed.
+          const tag = prep.tag ?? null;
+          const q = buildBulkQuery({ since: prep.since, withProducts: prep.withProducts, tag: kind === "full" ? tag : null, withTags: !!tag });
+          data = await gql(env, store.shop, token, BULK_START, { q });
         } catch (err) {
           if (err instanceof ShopifyError && err.code === "ACCESS_DENIED") throw new NonRetryableError(explainBulkFailure("ACCESS_DENIED", err.message));
           // Other GraphQL errors (they carry a code) will not change on retry; HTTP and network errors might.
@@ -185,12 +198,14 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         if (!env.SHOPIFY_ORIGIN_OVERRIDE && !url.startsWith("https://")) throw new NonRetryableError("Unexpected export URL");
         let offset = 0;
         let total = op.fileSize || Number.MAX_SAFE_INTEGER;
+        let carry: Carry | null = null;
         for (let n = 0; offset < total; n++) {
           const from = offset;
           const sums = { orders, lineItems };
+          const input: ChunkInput = { storeId, runId, url, start: from, total, timezone: prep.timezone, tag: prep.tag ?? null, carry };
           const r = await step.do(`import ${n}`, retry, async () => {
-            const store = await loadStore(env, storeId);
-            const res = await importChunk(env, store.id, url, from, total, prep.timezone);
+            await loadStore(env, storeId);
+            const res = await importChunk(env, input);
             await env.DB.prepare("UPDATE sync_runs SET status = 'importing', orders = ?, line_items = ?, bytes_done = ?, bytes_total = ? WHERE id = ?")
               .bind(sums.orders + res.orders, sums.lineItems + res.lineItems, res.next, res.total, runId)
               .run();
@@ -202,6 +217,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
           orders += r.orders;
           lineItems += r.lineItems;
           withAddress += r.withAddress;
+          carry = r.carry ?? null;
         }
       }
 
@@ -215,6 +231,22 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         if (kind === "full" && prep.allOrders === false) {
           warnings.push("Only the last 60 days of orders were available: add the read_all_orders scope to the app, then run a full resync.");
         }
+        // `scope` is undefined for runs that prepared before full resyncs stopped emptying the store first.
+        if (kind === "full" && prep.scope) {
+          if (prep.tag && orders === 0) {
+            const had = await env.DB.prepare("SELECT COUNT(*) AS n FROM orders WHERE store_id = ?").bind(storeId).first<{ n: number }>();
+            if (had?.n) {
+              throw new NonRetryableError(
+                `Shopify returned no orders tagged “${prep.tag}” for this store, so its ${had.n.toLocaleString("en-AU")} imported orders were left as they are. ` +
+                  "Check the tag is on the orders in Shopify, or change ORDER_TAG in wrangler.jsonc and deploy again.",
+              );
+            }
+            warnings.push(`No orders tagged “${prep.tag}” were found in this store.`);
+          }
+          // Everything this run did not write is gone from Shopify or no longer tagged.
+          await env.DB.batch(SWEEP_UNSEEN.map((sql) => env.DB.prepare(sql).bind(storeId, runId)));
+          await env.DB.prepare("UPDATE stores SET sync_scope = ? WHERE id = ?").bind(prep.scope, storeId).run();
+        }
         const warning = warnings.length ? warnings.join(" ") : null;
         await env.DB.prepare("UPDATE stores SET sync_cursor = ? WHERE id = ?").bind(prep.nextCursor, storeId).run();
         await env.DB.prepare("UPDATE sync_runs SET orders = ?, line_items = ? WHERE id = ?").bind(orders, lineItems, runId).run();
@@ -224,7 +256,8 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
       });
       return { orders, lineItems };
     } catch (err) {
-      const message = (err as Error)?.message ?? String(err);
+      // An error thrown inside a step comes back with its class name in front of the message.
+      const message = ((err as Error)?.message ?? String(err)).replace(/^(?:NonRetryable)?Error:\s*/, "");
       await step.do("record failure", async () => {
         await markRun(env, storeId, runId, "failed", message.slice(0, 1000));
       });

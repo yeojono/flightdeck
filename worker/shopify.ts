@@ -115,14 +115,26 @@ export function hasScope(scopes: string | null, name: string): boolean {
   return list.includes(`read_${name}`) || list.includes(`write_${name}`);
 }
 
-/** The bulk export query. `since` limits it to orders updated after that time. */
-export function buildBulkQuery(opts: { since: string | null; withProducts: boolean }): string {
-  const filter = opts.since ? `(query: "updated_at:>='${opts.since}'")` : "";
+/** The order tag to import, from the ORDER_TAG setting. Empty means every order. */
+export function orderTag(env: Pick<Env, "ORDER_TAG">): string {
+  return (env.ORDER_TAG ?? "").replace(/['"\\]/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The bulk export query. `since` limits it to orders updated after that time, and `tag` to
+ * orders carrying that tag. With `withTags` each order comes with its tags so the import can
+ * check them itself: Shopify does not document whether its tag search matches a whole tag.
+ */
+export function buildBulkQuery(opts: { since: string | null; withProducts: boolean; tag?: string | null; withTags?: boolean }): string {
+  const terms: string[] = [];
+  if (opts.tag) terms.push(`tag:'${opts.tag}'`);
+  if (opts.since) terms.push(`updated_at:>='${opts.since}'`);
+  const filter = terms.length ? `(query: "${terms.join(" AND ")}")` : "";
   const address = "{ provinceCode province countryCodeV2 country }";
   return `{
   orders${filter} {
     edges { node {
-      id name createdAt cancelledAt test currencyCode displayFinancialStatus sourceName
+      id name createdAt cancelledAt test currencyCode displayFinancialStatus sourceName${opts.withTags || opts.tag ? " tags" : ""}
       shippingAddress ${address}
       billingAddress ${address}
       lineItems { edges { node {

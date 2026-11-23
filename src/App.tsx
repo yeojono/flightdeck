@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { type Meta, api, setUnauthorisedHandler } from "./api";
 import { clearOptionCache } from "./components/FilterBar";
-import { DEFAULT_FILTERS, type FilterState, useStored } from "./lib";
+import { DEFAULT_FILTERS, type FilterState, useStored, withPinned } from "./lib";
 import { Attributes } from "./pages/Attributes";
 import { Explore } from "./pages/Explore";
 import { Overview } from "./pages/Overview";
@@ -39,7 +39,8 @@ export function App() {
   const [page, setPage] = useState<PageId>(currentPage);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
-  const [filters, setFilters] = useStored<FilterState>("wi.filters", DEFAULT_FILTERS);
+  const [storedFilters, setFilters] = useStored<FilterState>("wi.filters", DEFAULT_FILTERS);
+  const filters = useMemo(() => withPinned(storedFilters), [storedFilters]);
 
   useEffect(() => {
     setUnauthorisedHandler(() => setSession("out"));

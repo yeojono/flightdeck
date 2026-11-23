@@ -2,10 +2,10 @@ import { Hono } from "hono";
 import { requireAccess, sessionStatus } from "./auth";
 import { encrypt } from "./crypto";
 import type { Env, StoreRow } from "./env";
-import { normaliseKey } from "./ingest";
-import { ensureNormalised, normaliseValue } from "./values";
+import { importScope, normaliseKey } from "./ingest";
+import { normaliseValue } from "./values";
 import { BUILTIN_DIMS, ReportError, type ReportRequest, buildReport } from "./report";
-import { SHOP_INFO, ShopifyError, gql, hasScope, normaliseShop, requestToken } from "./shopify";
+import { SHOP_INFO, ShopifyError, gql, hasScope, normaliseShop, orderTag, requestToken } from "./shopify";
 import { SyncWorkflow, startSync } from "./sync";
 
 export { SyncWorkflow };
@@ -35,12 +35,16 @@ const STORE_COLUMNS = `s.id, s.shop, s.label, s.client_id, s.scopes, s.shop_name
   s.sync_cursor, s.last_sync_at, s.last_sync_status, s.last_sync_error, s.created_at`;
 
 app.get("/api/stores", async (c) => {
+  // needs_resync: imported before the current tag or cleaning rules, so the next sync re-imports everything.
   const { results } = await c.env.DB.prepare(
     `SELECT ${STORE_COLUMNS},
        (SELECT COUNT(*) FROM orders o WHERE o.store_id = s.id) AS order_count,
-       (SELECT MIN(day) FROM orders o WHERE o.store_id = s.id) AS first_day
+       (SELECT MIN(day) FROM orders o WHERE o.store_id = s.id) AS first_day,
+       (s.sync_cursor IS NOT NULL AND s.sync_scope IS NOT ?1) AS needs_resync
      FROM stores s ORDER BY s.label`,
-  ).all();
+  )
+    .bind(importScope(c.env))
+    .all();
   return c.json({ stores: results });
 });
 
@@ -253,12 +257,6 @@ app.put("/api/dimensions/:id/groups", async (c) => {
 // ---------- Reporting ----------
 
 app.get("/api/meta", async (c) => {
-  // One-off: clean up attribute values imported before value cleaning existed (or before its rules last changed).
-  try {
-    await ensureNormalised(c.env.DB);
-  } catch (e) {
-    console.error("Cleaning attribute values failed; reports still work, with less merging.", e);
-  }
   const [dims, props, range, settings, stores] = await c.env.DB.batch([
     c.env.DB.prepare(
       `SELECT d.id, d.name, (SELECT COUNT(*) FROM dimension_keys k WHERE k.dimension_id = d.id) AS keys FROM dimensions d ORDER BY d.sort, d.name`,
@@ -270,19 +268,20 @@ app.get("/api/meta", async (c) => {
     ),
     c.env.DB.prepare("SELECT MIN(day) AS first_day, MAX(day) AS last_day, COUNT(*) AS orders FROM orders"),
     c.env.DB.prepare("SELECT key, value FROM settings"),
-    c.env.DB.prepare("SELECT id, label, currency, fx_rate FROM stores ORDER BY label"),
+    c.env.DB.prepare("SELECT id, label, currency, fx_rate, (sync_cursor IS NOT NULL AND sync_scope IS NOT ?1) AS needs_resync FROM stores ORDER BY label").bind(importScope(c.env)),
   ]);
   const settingMap = Object.fromEntries((settings.results as Array<{ key: string; value: string }>).map((r) => [r.key, r.value]));
   const dimensions = [
-    ...(dims.results as Array<{ id: number; name: string; keys: number }>).map((d) => ({ id: `dim:${d.id}`, label: d.name, group: "Attributes", mapped: d.keys > 0 })),
-    ...BUILTIN_DIMS.map(({ id, label, group }) => ({ id, label, group, mapped: true })),
-    ...(props.results as Array<{ key: string }>).map((p) => ({ id: `prop:${p.key}`, label: p.key, group: "Unmapped properties", mapped: true })),
+    ...(dims.results as Array<{ id: number; name: string; keys: number }>).map((d) => ({ id: `dim:${d.id}`, label: d.name, group: "Attributes", mapped: d.keys > 0, optional: true })),
+    ...BUILTIN_DIMS.map(({ id, label, group, optional }) => ({ id, label, group, mapped: true, optional: !!optional })),
+    ...(props.results as Array<{ key: string }>).map((p) => ({ id: `prop:${p.key}`, label: p.key, group: "Unmapped properties", mapped: true, optional: true })),
   ];
   return c.json({
     dimensions,
     stores: stores.results,
     range: range.results[0],
     reportingCurrency: settingMap.reporting_currency ?? "AUD",
+    orderTag: orderTag(c.env) || null,
   });
 });
 

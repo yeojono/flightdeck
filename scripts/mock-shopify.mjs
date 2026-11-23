@@ -48,8 +48,9 @@ const server = http.createServer(async (req, res) => {
 
     if (query.includes("bulkOperationRunQuery")) {
       const since = variables.q.match(/updated_at:>='([^']+)'/)?.[1] ?? null;
+      const tag = variables.q.match(/tag:'([^']+)'/)?.[1] ?? null;
       const id = `gid://shopify/BulkOperation/${nextOp++}`;
-      ops.set(id, { polls: 0, body: Buffer.from(generateJsonl(shopKey, { orders: ORDERS, since })) });
+      ops.set(id, { polls: 0, body: Buffer.from(generateJsonl(shopKey, { orders: ORDERS, since, tag })) });
       return json(res, 200, { data: { bulkOperationRunQuery: { bulkOperation: { id, status: "CREATED" }, userErrors: [] } } });
     }
     if (query.includes("bulkOperation(")) {

@@ -24,7 +24,9 @@ function weighted(rand, items) {
 const RIMS = [["DT Swiss XM 481", 30], ["Stan's Flow EX3", 24], ["Race Face ARC 30", 18], ["WTB KOM Tough i30", 12], ["Reserve 30 HD", 9], ["Spank 359", 7]];
 const HUBS = [["DT Swiss 350", 34], ["Hope Pro 5", 26], ["Industry Nine Hydra", 18], ["Chris King", 8], ["Onyx Vesper", 6], ["Shimano XT", 8]];
 const COLOURS = [["Black", 46], ["Silver", 12], ["Red", 10], ["Blue", 9], ["Orange", 8], ["Purple", 7], ["Gold", 5], ["black", 3]];
-const SIZES = [['29"', 55], ['27.5"', 30], ["Mullet 29/27.5", 11], ['26"', 4]];
+// A wheelset's size is a set size, sometimes written without the word; a single wheel's is one wheel.
+const SET_SIZES = [['29" Set', 40], ["Mullet Set", 30], ['27.5" Set', 10], ["29", 12], ["Mullet", 8]];
+const SINGLE_SIZES = [['29"', 55], ['27.5"', 40], ['26"', 5]];
 const OTHER_PRODUCTS = [
   ["Tubeless Valve Set", "Accessories", 29],
   ["Rim Tape 30mm", "Accessories", 15],
@@ -69,7 +71,7 @@ export const SHOPS = {
 
 /**
  * @param {keyof SHOPS} shopKey
- * @param {{ orders?: number, since?: string | null, endDate?: string }} opts
+ * @param {{ orders?: number, since?: string | null, tag?: string | null, endDate?: string }} opts
  * @returns {string} JSONL in the shape of a Shopify bulk operation result
  */
 export function generateJsonl(shopKey, opts = {}) {
@@ -101,36 +103,37 @@ export function generateJsonl(shopKey, opts = {}) {
     };
     const items = [];
     if (rand() < 0.8) {
-      const pairs = rand() < 0.75 ? 2 : 1; // front + rear, or a single wheel
+      const set = rand() < 0.75; // a wheelset (front + rear), or a single wheel
       const rim = weighted(rand, RIMS);
       const hub = weighted(rand, HUBS);
       const colour = weighted(rand, COLOURS);
-      const size = weighted(rand, SIZES);
-      for (let w = 0; w < pairs; w++) {
-        const position = pairs === 1 ? (rand() < 0.5 ? "Front" : "Rear") : w === 0 ? "Front" : "Rear";
-        const refunded = rand() < 0.02;
-        items.push({
-          id: `gid://shopify/LineItem/${++lineId}`,
-          title: "Custom Wheel Build",
-          variantTitle: position,
-          sku: `CWB-${position[0]}`,
-          vendor: "Wheelworks",
-          quantity: 1,
-          currentQuantity: refunded ? 0 : 1,
-          originalUnitPriceSet: { shopMoney: { amount: String(shop.price / 2) } },
-          discountedTotalSet: { shopMoney: { amount: String(shop.price / 2) } },
-          product: { id: "gid://shopify/Product/9000000000001", productType: "Wheels" },
-          customAttributes: [
-            { key: shop.keys.rim, value: rim },
-            { key: shop.keys.hub, value: hub },
-            { key: shop.keys.colour, value: colour },
-            { key: shop.keys.size, value: size },
-            { key: "_builder_id", value: `b${orderId}` },
-          ],
-          __parentId: order.id,
-        });
-      }
+      const size = weighted(rand, set ? SET_SIZES : SINGLE_SIZES);
+      const position = rand() < 0.3 ? "Front" : "Rear";
+      const refunded = rand() < 0.02;
+      const price = set ? shop.price : shop.price / 2;
+      items.push({
+        id: `gid://shopify/LineItem/${++lineId}`,
+        title: set ? "Custom Alloy Wheels (Front + Rear)" : `Custom Alloy Wheel (${position} Only)`,
+        variantTitle: null,
+        sku: set ? "CWB-SET" : `CWB-${position[0]}`,
+        vendor: "Wheelworks",
+        quantity: 1,
+        currentQuantity: refunded ? 0 : 1,
+        originalUnitPriceSet: { shopMoney: { amount: String(price) } },
+        discountedTotalSet: { shopMoney: { amount: String(price) } },
+        product: { id: `gid://shopify/Product/900000000000${set ? 1 : 2}`, productType: "Custom Wheels" },
+        customAttributes: [
+          { key: shop.keys.rim, value: rim },
+          { key: shop.keys.hub, value: hub },
+          { key: shop.keys.colour, value: colour },
+          { key: shop.keys.size, value: size },
+          { key: "_builder_id", value: `b${orderId}` },
+        ],
+        __parentId: order.id,
+      });
     }
+    // Orders with a wheel are tagged in Shopify (in any letter case, among other tags); the rest are not.
+    order.tags = items.length ? (rand() < 0.15 ? ["VIP", "Wheels"] : ["wheels"]) : rand() < 0.2 ? ["vip"] : [];
     const extras = items.length ? (rand() < 0.4 ? 1 : 0) : 1 + Math.floor(rand() * 2);
     for (let e = 0; e < extras; e++) {
       const [title, type, price] = OTHER_PRODUCTS[Math.floor(rand() * OTHER_PRODUCTS.length)];
@@ -151,6 +154,7 @@ export function generateJsonl(shopKey, opts = {}) {
       });
     }
     if (opts.since && createdAt < opts.since) continue;
+    if (opts.tag && !order.tags.some((t) => t.toLowerCase() === opts.tag.toLowerCase())) continue;
     lines.push(JSON.stringify(order));
     for (const it of items) lines.push(JSON.stringify(it));
   }

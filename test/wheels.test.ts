@@ -30,7 +30,7 @@ const TITLES: Array<[title: string, variant: string | null, wheels: number]> = [
 
 function load(items: Array<{ title: string; variant: string | null; qty: number; current?: number }>) {
   const db = new DatabaseSync(":memory:");
-  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql"]) db.exec(migration(m));
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) db.exec(migration(m));
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc) VALUES (1, 's', 'Store', 'x', 'x')`);
   const lines: string[] = [];
   items.forEach((it, i) => {
@@ -49,7 +49,7 @@ function load(items: Array<{ title: string; variant: string | null; qty: number;
     );
   });
   const p = parseJsonl(lines.join("\n"), makeDayFormatter("UTC"));
-  db.prepare(INSERT_ORDERS).run(1, JSON.stringify(p.orders));
+  db.prepare(INSERT_ORDERS).run(1, JSON.stringify(p.orders), 1);
   db.prepare(INSERT_LINE_ITEMS).run(1, JSON.stringify(p.lineItems));
   return db;
 }

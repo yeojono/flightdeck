@@ -12,7 +12,7 @@ function loadDismissed(): string[] {
   }
 }
 
-/** Lets you show several values of an attribute as one, e.g. "Mullet Set" as "Mullet". */
+/** Lets you show several values of an attribute as one, e.g. "157x12 Super Boost" as "157x12". */
 export function CombineValues({ dims, keys }: { dims: Dimension[]; keys: AttributeKey[] }) {
   const mapped = dims.filter((d) => keys.some((k) => k.dimension_id === d.id));
   const [dimId, setDimId] = useState<number | null>(null);
@@ -100,8 +100,9 @@ export function CombineValues({ dims, keys }: { dims: Dimension[]; keys: Attribu
         </select>
       </header>
       <p className="hint top">
-        Values that differ only in upper and lower case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in and 27.5) are combined automatically. Tick others that mean the
-        same thing to show them as one value in reports.
+        Values that differ only in upper and lower case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in and 27.5) are combined automatically, and so are known
+        spellings of the same option (6 Bolt and 6-Bolt). A size on a wheelset is always shown as a set (29 Set), so it stays apart from the same size on a single wheel (29). Tick
+        others that mean the same thing to show them as one value in reports.
       </p>
       {error && <div className="banner error">{error}</div>}
 

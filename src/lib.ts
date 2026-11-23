@@ -71,12 +71,21 @@ export const DEFAULT_FILTERS: FilterState = {
   to: "",
   filters: [
     { dim: "store", values: [] },
+    { dim: "wheel_type", values: [] },
     { dim: "country", values: [] },
     { dim: "province", values: [] },
   ],
   search: "",
   includeCancelled: false,
 };
+
+/** Filters saved before a pinned filter existed do not have it yet: put it back in its usual place. */
+export function withPinned(f: FilterState): FilterState {
+  const have = new Set(f.filters.map((x) => x.dim));
+  if (DEFAULT_FILTERS.filters.every((p) => have.has(p.dim))) return f;
+  const pinned = DEFAULT_FILTERS.filters.map((p) => f.filters.find((x) => x.dim === p.dim) ?? p);
+  return { ...f, filters: [...pinned, ...f.filters.filter((x) => !pinned.some((p) => p.dim === x.dim))] };
+}
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 

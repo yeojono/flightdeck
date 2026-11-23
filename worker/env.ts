@@ -14,6 +14,8 @@ export interface Env {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   SHOPIFY_API_VERSION: string;
+  /** Only orders with this Shopify order tag are imported. Empty or unset imports every order. */
+  ORDER_TAG?: string;
   INGEST_CHUNK_BYTES?: string;
   /** Local testing only: send all Shopify calls to this origin (see scripts/mock-shopify.mjs). */
   SHOPIFY_ORIGIN_OVERRIDE?: string;
@@ -33,6 +35,8 @@ export interface StoreRow {
   timezone: string | null;
   fx_rate: number;
   sync_cursor: string | null;
+  /** The import settings the store's data was last fully imported with (see importScope). */
+  sync_scope: string | null;
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
