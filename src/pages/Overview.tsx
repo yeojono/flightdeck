@@ -1,7 +1,7 @@
 import type { AppContext } from "../App";
 import { ReportChart } from "../components/Charts";
 import { FilterBar } from "../components/FilterBar";
-import { type Metric, formatCompact, timeGrain, toRequest, useReport, useTheme } from "../lib";
+import { type Metric, formatCompact, metricLabel, timeGrain, toRequest, useReport, useTheme } from "../lib";
 
 function Card({ ctx, title, dim, metric, time, onOpen }: { ctx: AppContext; title: string; dim: string; metric: Metric; time?: boolean; onOpen: () => void }) {
   const theme = useTheme();
@@ -26,7 +26,7 @@ function Card({ ctx, title, dim, metric, time, onOpen }: { ctx: AppContext; titl
             split={false}
             topN={8}
             theme={theme}
-            seriesLabel={metric === "units" ? "Units" : metric === "orders" ? "Orders" : "Revenue"}
+            seriesLabel={metricLabel(metric)}
             height={time ? 260 : undefined}
           />
         )}
@@ -47,7 +47,7 @@ export function Overview(ctx: AppContext) {
     // The Explore page reads its starting state from here when it opens.
     try {
       const saved = JSON.parse(localStorage.getItem("wi.explore") ?? "{}");
-      localStorage.setItem("wi.explore", JSON.stringify({ ...saved, groupBy, splitBy: "", view: "chart" }));
+      localStorage.setItem("wi.explore", JSON.stringify({ ...saved, metric: "wheels", groupBy, splitBy: "", view: "chart" }));
     } catch {
       /* storage unavailable: Explore opens with its defaults */
     }
@@ -71,7 +71,7 @@ export function Overview(ctx: AppContext) {
 
   const t = totals.data?.totals;
   const tiles: Array<{ label: string; value: string }> = [
-    { label: "Units sold", value: t ? formatCompact(t.units ?? 0, "units", meta.reportingCurrency) : "-" },
+    { label: "Wheels sold", value: t ? formatCompact(t.wheels ?? 0, "wheels", meta.reportingCurrency) : "-" },
     { label: "Orders", value: t ? formatCompact(t.orders ?? 0, "orders", meta.reportingCurrency) : "-" },
     { label: `Revenue (${meta.reportingCurrency})`, value: t ? formatCompact(t.revenue ?? 0, "revenue", meta.reportingCurrency) : "-" },
   ];
@@ -96,12 +96,12 @@ export function Overview(ctx: AppContext) {
         ))}
       </div>
       <div className="grid">
-        <Card ctx={ctx} title={`Units sold by ${grain}`} dim={grain} metric="units" time onOpen={() => open(grain)} />
+        <Card ctx={ctx} title={`Wheels sold by ${grain}`} dim={grain} metric="wheels" time onOpen={() => open(grain)} />
         {attrs.map((d) => (
-          <Card key={d.id} ctx={ctx} title={`Units by ${d.label.toLowerCase()}`} dim={d.id} metric="units" onOpen={() => open(d.id)} />
+          <Card key={d.id} ctx={ctx} title={`Wheels by ${d.label.toLowerCase()}`} dim={d.id} metric="wheels" onOpen={() => open(d.id)} />
         ))}
-        <Card ctx={ctx} title="Units by country" dim="country" metric="units" onOpen={() => open("country")} />
-        <Card ctx={ctx} title="Units by state / province" dim="province" metric="units" onOpen={() => open("province")} />
+        <Card ctx={ctx} title="Wheels by country" dim="country" metric="wheels" onOpen={() => open("country")} />
+        <Card ctx={ctx} title="Wheels by state / province" dim="province" metric="wheels" onOpen={() => open("province")} />
       </div>
       {unmapped.length > 0 && attrs.length > 0 && (
         <p className="hint">
@@ -109,7 +109,8 @@ export function Overview(ctx: AppContext) {
         </p>
       )}
       <p className="hint">
-        Charts for rim, hub and other attributes count only line items that carry that property. Test orders are always excluded. Revenue is the line total after line-level
+        Wheels count a wheelset (“Wheelset” or “Front + Rear” in the product name) as 2 and a single front or rear wheel as 1. Other products, and wheel services such as
+        rebuilds, wheel shells and per-wheel upgrades, count as 0. Charts for rim, hub and other attributes count only line items that carry that property. Test orders are always excluded. Revenue is the line total after line-level
         discounts, before tax and shipping, converted with each store’s conversion rate.
       </p>
     </div>

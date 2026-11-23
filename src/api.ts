@@ -33,6 +33,8 @@ export interface ReportRequest {
 export interface Row {
   g1?: string;
   g2?: string;
+  /** Wheels sold: a wheelset counts as 2, a single front or rear wheel as 1, anything else as 0. */
+  wheels: number;
   units: number;
   orders: number;
   revenue: number;

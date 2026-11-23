@@ -3,12 +3,15 @@ import { type Report, type ReportFilter, type ReportRequest, type Row, runReport
 
 // ---------- Metrics & formatting ----------
 
-export type Metric = "units" | "orders" | "revenue";
+export type Metric = "wheels" | "orders" | "revenue" | "units";
 export const METRICS: Array<{ id: Metric; label: string }> = [
-  { id: "units", label: "Units" },
+  { id: "wheels", label: "Wheels" },
   { id: "orders", label: "Orders" },
   { id: "revenue", label: "Revenue" },
+  // Every product counted once per unit, accessories included. Kept for things like tyres and tape.
+  { id: "units", label: "Units" },
 ];
+export const metricLabel = (m: Metric) => METRICS.find((x) => x.id === m)?.label ?? m;
 
 const nf = new Intl.NumberFormat("en-AU", { maximumFractionDigits: 0 });
 const compact = new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 1 });
