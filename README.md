@@ -1,4 +1,4 @@
-# Wheel Insights
+# FlightDeck
 
 Sales analytics across several Shopify stores, broken down by line item properties (rim, hub, colour, wheel size and anything else your product builder records) and by country and state/province.
 
@@ -24,7 +24,7 @@ npm install
 npx wrangler login
 
 # Create the database, then paste the database_id it prints into wrangler.jsonc
-npx wrangler d1 create wheel-insights
+npx wrangler d1 create flightdeck
 npm run db:migrate
 
 npm run deploy
@@ -34,7 +34,7 @@ npx wrangler secret put ADMIN_PASSWORD   # password for signing in to the dashbo
 npx wrangler secret put APP_SECRET       # long random string, e.g. from: openssl rand -base64 32
 ```
 
-`npm run deploy` prints your URL (`https://wheel-insights.<your-subdomain>.workers.dev`). Open it and sign in with `ADMIN_PASSWORD`.
+`npm run deploy` prints your URL (`https://flightdeck.<your-subdomain>.workers.dev`). Open it and sign in with `ADMIN_PASSWORD`.
 
 Keep `APP_SECRET` safe and do not change it later: it encrypts the stored Shopify credentials, so changing it means reconnecting every store.
 
@@ -107,6 +107,7 @@ worker/report.ts    builds the aggregate SQL behind every chart
 worker/auth.ts      password sign-in and sessions
 migrations/         D1 schema
 src/                React dashboard
+public/             app icon and favicons (icon.svg is the source)
 scripts/            mock Shopify server for local testing
 ```
 
