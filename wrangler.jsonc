@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "wheel-insights",
+  "name": "flightdeck",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-01",
   "observability": { "enabled": true },
@@ -11,11 +11,11 @@
     "run_worker_first": ["/api/*"]
   },
 
-  // Run `npx wrangler d1 create wheel-insights` and paste the database_id it prints.
+  // Run `npx wrangler d1 create flightdeck` and paste the database_id it prints.
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "wheel-insights",
+      "database_name": "flightdeck",
       "database_id": "67997891-e519-49c6-aadd-86b2f5dae815",
       "migrations_dir": "migrations"
     }
@@ -23,7 +23,7 @@
 
   // Durable, resumable order sync (one instance per store per sync run).
   "workflows": [
-    { "name": "wheel-insights-sync", "binding": "SYNC", "class_name": "SyncWorkflow" }
+    { "name": "flightdeck-sync", "binding": "SYNC", "class_name": "SyncWorkflow" }
   ],
 
   // Incremental sync of every connected store, every 6 hours.

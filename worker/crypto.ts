@@ -13,6 +13,9 @@ function unb64(s: string): Uint8Array {
   return out;
 }
 
+// The "wheel-insights:" prefixes below are key-derivation salts from before the app was
+// renamed to FlightDeck. Leave them as they are: changing them would make every stored
+// Shopify credential undecryptable and sign everyone out.
 async function aesKey(secret: string): Promise<CryptoKey> {
   const hash = await crypto.subtle.digest("SHA-256", te.encode("wheel-insights:enc:" + secret));
   return crypto.subtle.importKey("raw", hash, "AES-GCM", false, ["encrypt", "decrypt"]);

@@ -70,11 +70,11 @@ export function App() {
     <div className="shell">
       <aside className="nav">
         <div className="brand">
-          <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden>
-            <circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" strokeWidth="3.5" />
-            <circle cx="16" cy="16" r="3" fill="currentColor" />
+          <svg width="22" height="22" viewBox="0 0 48 48" fill="none" aria-hidden>
+            <path d="M9.8 38.5A18 18 0 1 1 38.2 38.5" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+            <path d="M21.39 25.65 30.12 17.13A1 1 0 0 1 31.76 18.29L26.61 29.35A3.2 3.2 0 1 1 21.39 25.65Z" fill="currentColor" />
           </svg>
-          Wheel Insights
+          FlightDeck
         </div>
         <nav>
           {PAGES.map((p) => (
