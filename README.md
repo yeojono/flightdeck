@@ -13,6 +13,7 @@ Only orders tagged `wheels` in Shopify are imported (see [Which orders are impor
 - **Wheels sold** counts a wheelset as 2 wheels and a single front or rear wheel as 1, read from the product name ("Wheelset" or "Front + Rear" for a set, "Front"/"Rear" for a single). Other products, and wheel services such as rebuilds, wheel shells, per-wheel upgrades, deposits and shipping, count as 0. Units counts every product once per unit.
 - **Wheel type** - every line item is marked as a wheelset, a single wheel, a rebuild or none of these, using the same reading of the product name as wheels sold, so sets and single wheels can be filtered apart or compared (see [Wheelsets and single wheels](#wheelsets-and-single-wheels)).
 - **Hub set and Rim set** - read from each product’s `ultimate_hub_set` and `ultimate_rim_set` metafields, so new builds, which name their hub and rim in the product rather than in a line item property, can be filtered and grouped by hub and rim (see [Product metafields](#product-metafields)).
+- **Export everything** - on the Stores page, download every imported line item as one CSV, with its order, store, attributes and raw properties.
 - **Attributes** - map each store’s property keys ("Rim", "Rim Choice", "Select your rim") to one shared attribute so stores line up.
   Values that differ only in case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in, 27.5) are combined automatically, as are known spellings of the same option (6 Bolt and 6-Bolt), and you can combine others yourself (for example show "157x12 Super Boost" as "157x12"). The app suggests these when several values differ by the same word.
 - **Stores** - connect stores, see sync status, set currency conversion rates.
@@ -187,6 +188,7 @@ worker/ingest.ts    parses the export, keeps tagged orders, and writes rows to D
 worker/values.ts    cleaning that applies to every property value (case, spacing, quote and inch marks)
 worker/wheels.ts    wheelset or single wheel from the product title, and the value rules that depend on it
 worker/report.ts    builds the aggregate SQL behind every chart
+worker/export.ts    the whole database as one CSV, a row per line item
 worker/auth.ts      Cloudflare Access check on every API request
 worker/access.ts    Access JWT verification (only for a hostname-based Access application)
 migrations/         D1 schema
