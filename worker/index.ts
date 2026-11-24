@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { requireAccess, sessionStatus } from "./auth";
 import { encrypt } from "./crypto";
 import type { Env, StoreRow } from "./env";
+import { exportCsv } from "./export";
 import { importScope, normaliseKey } from "./ingest";
 import { normaliseValue } from "./values";
 import { BUILTIN_DIMS, ReportError, type ReportRequest, buildReport } from "./report";
@@ -298,6 +299,26 @@ app.post("/api/report", async (c) => {
   const q = buildReport(req);
   const [rows, totals] = await c.env.DB.batch([c.env.DB.prepare(q.sql).bind(...q.params), c.env.DB.prepare(q.totalsSql).bind(...q.totalsParams)]);
   return c.json({ rows: rows.results, totals: totals.results[0] ?? null });
+});
+
+/** Everything imported, one row per line item, as a CSV download. */
+app.get("/api/export.csv", (c) => {
+  const pieces = exportCsv(async (sql, params) => (await c.env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>()).results);
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await pieces.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+  });
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="flightdeck-export-${new Date().toISOString().slice(0, 10)}.csv"`,
+      "Cache-Control": "no-store",
+    },
+  });
 });
 
 app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
