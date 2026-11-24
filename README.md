@@ -12,6 +12,7 @@ Only orders tagged `wheels` in Shopify are imported (see [Which orders are impor
 - **Explore** - pick a metric (wheels, orders, revenue, units), group by any attribute or field, optionally split by a second one, and view it as a chart, a heatmap (for example rim x hub) or a table. Filter by date, store, wheel type, country, state and any attribute. Export to CSV.
 - **Wheels sold** counts a wheelset as 2 wheels and a single front or rear wheel as 1, read from the product name ("Wheelset" or "Front + Rear" for a set, "Front"/"Rear" for a single). Other products, and wheel services such as rebuilds, wheel shells, per-wheel upgrades, deposits and shipping, count as 0. Units counts every product once per unit.
 - **Wheel type** - every line item is marked as a wheelset, a single wheel, a rebuild or none of these, using the same reading of the product name as wheels sold, so sets and single wheels can be filtered apart or compared (see [Wheelsets and single wheels](#wheelsets-and-single-wheels)).
+- **Hub set and Rim set** - read from each product’s `ultimate_hub_set` and `ultimate_rim_set` metafields, so new builds, which name their hub and rim in the product rather than in a line item property, can be filtered and grouped by hub and rim (see [Product metafields](#product-metafields)).
 - **Attributes** - map each store’s property keys ("Rim", "Rim Choice", "Select your rim") to one shared attribute so stores line up.
   Values that differ only in case, spacing, quote marks or inch marks (27.5", 27.5″, 27.5 in, 27.5) are combined automatically, as are known spellings of the same option (6 Bolt and 6-Bolt), and you can combine others yourself (for example show "157x12 Super Boost" as "157x12"). The app suggests these when several values differ by the same word.
 - **Stores** - connect stores, see sync status, set currency conversion rates.
@@ -72,6 +73,10 @@ Run `pnpm run db:migrate` (it drops the old sign-in rate-limit table), set up Ac
 
 Run `pnpm run db:migrate` before deploying. It adds the column for cleaned values, the table for values you combine, and a **Freehub** attribute that the `freehub` and `driver` keys both feed (unless you had already mapped them). Values imported earlier are cleaned when the store is next re-imported, which the upgrade below does by itself.
 
+### Upgrading to product metafields (Hub set and Rim set)
+
+Run `pnpm run db:migrate` before deploying. It adds the **Hub set** and **Rim set** attributes, fed by the `ultimate_hub_set` and `ultimate_rim_set` product metafields. After the deploy each store shows "Import settings changed", and its next sync runs as a full resync that brings the metafield values in. Until then the two attributes have no values.
+
 ### Upgrading to tagged orders and wheel types
 
 Run `pnpm run db:migrate` before deploying. It adds the columns this needs, creates the attributes Brake mount, Hole count, Spokes, Front hub size, Rear hub size and Valve colour, renames Colour to Hub colour if you had not mapped anything to it, maps the property keys found in your orders to their attributes (keys you mapped yourself are left alone), and saves a few combined values you can undo on the Attributes page.
@@ -104,6 +109,7 @@ These depend on your Shopify setup and could not be tested without a real store:
 
 - **Order history.** With only `read_orders`, Shopify returns the last 60 days of orders, even for an app in the store’s own organisation. Add `read_all_orders` to the app version, release it, approve the update in the store admin if asked, then run a **Full resync** for each store (an ordinary sync only fetches orders changed since the last one, so it will not fill in the older history).
 - **State and country.** These come from the shipping address (billing address as a fallback), which Shopify treats as protected customer data. Shopify’s docs say this is available to custom apps, but if a sync finishes with a note that no address data was returned, the app needs protected customer data access for addresses enabled in the Dev Dashboard.
+- **Metafield namespace.** `PRODUCT_METAFIELDS` assumes `ultimate_hub_set` and `ultimate_rim_set` are in the `custom` namespace (what Shopify uses for metafields defined in the admin). If Hub set and Rim set stay empty after a full resync, check the namespace under **Settings > Custom data > Products** in Shopify and change the setting to match.
 - **Error `shop_not_permitted`** when connecting means the app and store are not in the same organisation, or the app is not installed on the store.
 - **Export failed with ACCESS_DENIED** means a scope is missing or Bulk queries is not enabled. The message includes Shopify’s own wording, which usually names what is missing.
 
@@ -130,6 +136,16 @@ Everything else (tape, valves, shells, upgrades, deposits, shipping, hubs, rims)
 The wheel type also decides how a size is read. On a wheelset, a size of `29`, `29"` or `29" Set` is always shown as **29 Set** (likewise Mullet Set, 27.5 Set, 700c Set). On a single wheel, rebuild or shell, `29"` is shown as **29**: one wheel. The two are never combined, and the app will not suggest combining them.
 
 Other values cleaned by rule, whatever the product: hole counts (`32 / 28 (Recommended)` and `32 / 28` become 32/28, always rear/front; `32H` becomes 32), brake mounts (6-Bolt, Centerlock), freehubs (`HG` becomes Shimano HG, `Micro Spline` becomes Microspline) and hub sizes (`110x20 Boost (2021+) (Black & Silver Only)` becomes 110x20 Boost; `148x12 (Boost)` becomes 148x12). The rules are in `worker/wheels.ts`; when they change, bump `RULES_VERSION` there and each store re-imports at its next sync.
+
+## Product metafields
+
+Product metafields listed in `PRODUCT_METAFIELDS` (`custom.ultimate_hub_set, custom.ultimate_rim_set` in `wrangler.jsonc`) are imported with every line item of that product and stored like a line item property under the metafield’s key. The migration maps `ultimate_hub_set` to **Hub set** and `ultimate_rim_set` to **Rim set**; any other metafield you add appears on the Attributes page as a property you can map.
+
+- They are read through the line item’s product, so they need the `read_products` scope. A line item whose product has been deleted has none.
+- A property typed on the line item with the same key wins over the metafield.
+- The value is the product’s metafield **when the order was last imported**, not when it was ordered. If you change a product’s metafield later, older orders only pick up the new value on a **Full resync**.
+- A list metafield is stored as its items joined by commas.
+- Changing `PRODUCT_METAFIELDS` makes each store run a full resync at its next sync. A bare key such as `ultimate_hub_set` means the `custom` namespace.
 
 ## How the numbers are defined
 
@@ -185,6 +201,7 @@ scripts/            mock Shopify server for local testing
 |---|---|---|
 | `wrangler.jsonc` vars | `SHOPIFY_API_VERSION` | Admin API version (currently `2026-10`). Shopify retires versions after about a year, so bump this occasionally. |
 | `wrangler.jsonc` vars | `ORDER_TAG` | Only orders with this Shopify order tag are imported (`wheels`). Empty imports every order. |
+| `wrangler.jsonc` vars | `PRODUCT_METAFIELDS` | Product metafields imported with each line item (`namespace.key`, comma separated). |
 | `wrangler.jsonc` vars | `INGEST_CHUNK_BYTES` | Bytes of the export processed per Workflow step. |
 | `wrangler.jsonc` triggers | `crons` | Automatic sync schedule. |
 | `wrangler.jsonc` vars | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` | Optional. Only for an Access application set up by hostname in Zero Trust. |

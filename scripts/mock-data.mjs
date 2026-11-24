@@ -121,7 +121,16 @@ export function generateJsonl(shopKey, opts = {}) {
         currentQuantity: refunded ? 0 : 1,
         originalUnitPriceSet: { shopMoney: { amount: String(price) } },
         discountedTotalSet: { shopMoney: { amount: String(price) } },
-        product: { id: `gid://shopify/Product/900000000000${set ? 1 : 2}`, productType: "Custom Wheels" },
+        // A wheelset product names its hub and rim in two product metafields, which the export returns as mf0 and
+        // mf1 (PRODUCT_METAFIELDS in wrangler.jsonc lists ultimate_hub_set first). Single wheels have none.
+        product: set
+          ? {
+              id: `gid://shopify/Product/${9000000000100 + RIMS.findIndex(([r]) => r === rim) * 10 + HUBS.findIndex(([h]) => h === hub)}`,
+              productType: "Custom Wheels",
+              mf0: { value: `${hub} Hubs` },
+              mf1: { value: `${rim} Rim Set` },
+            }
+          : { id: "gid://shopify/Product/9000000000002", productType: "Custom Wheels", mf0: null, mf1: null },
         customAttributes: [
           { key: shop.keys.rim, value: rim },
           { key: shop.keys.hub, value: hub },

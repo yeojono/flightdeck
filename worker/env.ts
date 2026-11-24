@@ -17,6 +17,8 @@ export interface Env {
   /** Only orders with this Shopify order tag are imported. Empty or unset imports every order. */
   ORDER_TAG?: string;
   INGEST_CHUNK_BYTES?: string;
+  /** Product metafields imported as if they were line item properties, as "namespace.key, namespace.key". */
+  PRODUCT_METAFIELDS?: string;
   /** Local testing only: send all Shopify calls to this origin (see scripts/mock-shopify.mjs). */
   SHOPIFY_ORIGIN_OVERRIDE?: string;
 }
