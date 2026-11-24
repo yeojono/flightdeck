@@ -1,11 +1,12 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { requireAccess, sessionStatus } from "./auth";
+import { BUMP_DATA, BUMP_VIEW, cached, digest } from "./cache";
 import { encrypt } from "./crypto";
 import type { Env, StoreRow } from "./env";
 import { exportCsv } from "./export";
 import { importScope, normaliseKey } from "./ingest";
 import { normaliseValue } from "./values";
-import { BUILTIN_DIMS, ReportError, type ReportRequest, buildReport } from "./report";
+import { BUILTIN_DIMS, type ReportBase, ReportError, type ReportSpec, finishReports, planReports } from "./report";
 import { SHOP_INFO, ShopifyError, gql, hasScope, normaliseShop, orderTag, requestToken } from "./shopify";
 import { SyncWorkflow, startSync } from "./sync";
 
@@ -30,6 +31,51 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/session", sessionStatus);
 app.use("/api/*", requireAccess);
 
+// Anything saved through the API can change what reports show (a mapping, a label, a conversion
+// rate), so reports cached before it are no longer served. Imports do the same for the data.
+const CHANGES_NOTHING = /^\/api\/(reports|stores\/\d+\/sync)$/;
+app.use("/api/*", async (c, next) => {
+  await next();
+  if (!["GET", "HEAD"].includes(c.req.method) && c.res.ok && !CHANGES_NOTHING.test(c.req.path)) await c.env.DB.prepare(BUMP_VIEW).run();
+});
+
+type Ctx = Context<{ Bindings: Env }>;
+
+// ---------- Counts that only change when orders are imported ----------
+// Each is one pass over a table, so it is worked out once per import and kept (see cache.ts).
+
+interface OrderStats {
+  store_id: number;
+  orders: number;
+  first_day: string | null;
+  last_day: string | null;
+}
+async function orderStats(c: Ctx): Promise<OrderStats[]> {
+  const json = await cached(c.env, c.executionCtx, "stats:orders", "data", async () => {
+    const { results } = await c.env.DB.prepare("SELECT store_id, COUNT(*) AS orders, MIN(day) AS first_day, MAX(day) AS last_day FROM orders GROUP BY store_id").all();
+    return results;
+  });
+  return JSON.parse(json);
+}
+
+interface PropStats {
+  key: string;
+  line_items: number;
+  stores: number;
+  distinct_values: number;
+}
+/** Every line item property key in use, most used first. */
+async function propStats(c: Ctx): Promise<PropStats[]> {
+  const json = await cached(c.env, c.executionCtx, "stats:props", "data", async () => {
+    const { results } = await c.env.DB.prepare(
+      `SELECT key, COUNT(*) AS line_items, COUNT(DISTINCT store_id) AS stores, COUNT(DISTINCT lower(COALESCE(norm, value))) AS distinct_values
+       FROM line_item_props GROUP BY key`,
+    ).all<PropStats>();
+    return results.sort((a, b) => b.line_items - a.line_items);
+  });
+  return JSON.parse(json);
+}
+
 // ---------- Stores ----------
 
 const STORE_COLUMNS = `s.id, s.shop, s.label, s.client_id, s.scopes, s.shop_name, s.currency, s.timezone, s.fx_rate,
@@ -37,16 +83,14 @@ const STORE_COLUMNS = `s.id, s.shop, s.label, s.client_id, s.scopes, s.shop_name
 
 app.get("/api/stores", async (c) => {
   // needs_resync: imported before the current tag or cleaning rules, so the next sync re-imports everything.
-  const { results } = await c.env.DB.prepare(
-    `SELECT ${STORE_COLUMNS},
-       (SELECT COUNT(*) FROM orders o WHERE o.store_id = s.id) AS order_count,
-       (SELECT MIN(day) FROM orders o WHERE o.store_id = s.id) AS first_day,
-       (s.sync_cursor IS NOT NULL AND s.sync_scope IS NOT ?1) AS needs_resync
-     FROM stores s ORDER BY s.label`,
-  )
-    .bind(importScope(c.env))
-    .all();
-  return c.json({ stores: results });
+  const [{ results }, stats] = await Promise.all([
+    c.env.DB.prepare(`SELECT ${STORE_COLUMNS}, (s.sync_cursor IS NOT NULL AND s.sync_scope IS NOT ?1) AS needs_resync FROM stores s ORDER BY s.label`)
+      .bind(importScope(c.env))
+      .all<{ id: number }>(),
+    orderStats(c),
+  ]);
+  const byStore = new Map(stats.map((s) => [s.store_id, s]));
+  return c.json({ stores: results.map((s) => ({ ...s, order_count: byStore.get(s.id)?.orders ?? 0, first_day: byStore.get(s.id)?.first_day ?? null })) });
 });
 
 /** Proves the credentials work and returns what Shopify says about the shop. */
@@ -129,6 +173,7 @@ app.delete("/api/stores/:id", async (c) => {
     c.env.DB.prepare("DELETE FROM orders WHERE store_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM sync_runs WHERE store_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM stores WHERE id = ?").bind(id),
+    c.env.DB.prepare(BUMP_DATA),
   ]);
   return c.json({ ok: true });
 });
@@ -149,21 +194,21 @@ app.get("/api/runs", async (c) => {
 // ---------- Attributes (line item properties) ----------
 
 app.get("/api/attributes", async (c) => {
-  const [dims, keys] = await c.env.DB.batch([
-    c.env.DB.prepare("SELECT id, name, sort FROM dimensions ORDER BY sort, name"),
-    c.env.DB.prepare(
-      `SELECT p.key, COUNT(*) AS line_items, COUNT(DISTINCT p.store_id) AS stores, COUNT(DISTINCT lower(COALESCE(p.norm, p.value))) AS distinct_values,
-              k.dimension_id
-       FROM line_item_props p LEFT JOIN dimension_keys k ON k.key = p.key
-       GROUP BY p.key ORDER BY line_items DESC LIMIT 500`,
-    ),
+  const [[dims, mapped], props] = await Promise.all([
+    c.env.DB.batch<{ key: string; dimension_id: number }>([
+      c.env.DB.prepare("SELECT id, name, sort FROM dimensions ORDER BY sort, name"),
+      c.env.DB.prepare("SELECT key, dimension_id FROM dimension_keys ORDER BY key"),
+    ]),
+    propStats(c),
   ]);
-  // Mapped keys that no longer appear in any order are still listed so they can be unmapped.
-  const orphan = await c.env.DB.prepare(
-    `SELECT k.key, 0 AS line_items, 0 AS stores, 0 AS distinct_values, k.dimension_id FROM dimension_keys k
-     WHERE NOT EXISTS (SELECT 1 FROM line_item_props p WHERE p.key = k.key)`,
-  ).all();
-  return c.json({ dimensions: dims.results, keys: [...keys.results, ...orphan.results] });
+  const dimensionOf = new Map(mapped.results.map((k) => [k.key, k.dimension_id]));
+  const inUse = new Set(props.map((p) => p.key));
+  const keys = [
+    ...props.slice(0, 500).map((p) => ({ ...p, dimension_id: dimensionOf.get(p.key) ?? null })),
+    // Mapped keys that no longer appear in any order are still listed so they can be unmapped.
+    ...mapped.results.filter((k) => !inUse.has(k.key)).map((k) => ({ key: k.key, line_items: 0, stores: 0, distinct_values: 0, dimension_id: k.dimension_id })),
+  ];
+  return c.json({ dimensions: dims.results, keys });
 });
 
 app.get("/api/attributes/values", async (c) => {
@@ -258,29 +303,33 @@ app.put("/api/dimensions/:id/groups", async (c) => {
 // ---------- Reporting ----------
 
 app.get("/api/meta", async (c) => {
-  const [dims, props, range, settings, stores] = await c.env.DB.batch([
-    c.env.DB.prepare(
-      `SELECT d.id, d.name, (SELECT COUNT(*) FROM dimension_keys k WHERE k.dimension_id = d.id) AS keys FROM dimensions d ORDER BY d.sort, d.name`,
-    ),
-    c.env.DB.prepare(
-      `SELECT p.key, COUNT(*) AS n FROM line_item_props p
-       WHERE NOT EXISTS (SELECT 1 FROM dimension_keys k WHERE k.key = p.key)
-       GROUP BY p.key ORDER BY n DESC LIMIT 100`,
-    ),
-    c.env.DB.prepare("SELECT MIN(day) AS first_day, MAX(day) AS last_day, COUNT(*) AS orders FROM orders"),
-    c.env.DB.prepare("SELECT key, value FROM settings"),
-    c.env.DB.prepare("SELECT id, label, currency, fx_rate, (sync_cursor IS NOT NULL AND sync_scope IS NOT ?1) AS needs_resync FROM stores ORDER BY label").bind(importScope(c.env)),
+  const [[dims, mapped, settings, stores], props, orders] = await Promise.all([
+    c.env.DB.batch([
+      c.env.DB.prepare("SELECT id, name FROM dimensions ORDER BY sort, name"),
+      c.env.DB.prepare("SELECT key, dimension_id FROM dimension_keys"),
+      c.env.DB.prepare("SELECT key, value FROM settings"),
+      c.env.DB.prepare("SELECT id, label, currency, fx_rate, (sync_cursor IS NOT NULL AND sync_scope IS NOT ?1) AS needs_resync FROM stores ORDER BY label").bind(importScope(c.env)),
+    ]),
+    propStats(c),
+    orderStats(c),
   ]);
   const settingMap = Object.fromEntries((settings.results as Array<{ key: string; value: string }>).map((r) => [r.key, r.value]));
+  const keys = mapped.results as Array<{ key: string; dimension_id: number }>;
+  const mappedKeys = new Set(keys.map((k) => k.key));
+  const fed = new Set(keys.map((k) => k.dimension_id));
   const dimensions = [
-    ...(dims.results as Array<{ id: number; name: string; keys: number }>).map((d) => ({ id: `dim:${d.id}`, label: d.name, group: "Attributes", mapped: d.keys > 0, optional: true })),
+    ...(dims.results as Array<{ id: number; name: string }>).map((d) => ({ id: `dim:${d.id}`, label: d.name, group: "Attributes", mapped: fed.has(d.id), optional: true })),
     ...BUILTIN_DIMS.map(({ id, label, group, optional }) => ({ id, label, group, mapped: true, optional: !!optional })),
-    ...(props.results as Array<{ key: string }>).map((p) => ({ id: `prop:${p.key}`, label: p.key, group: "Unmapped properties", mapped: true, optional: true })),
+    ...props
+      .filter((p) => !mappedKeys.has(p.key))
+      .slice(0, 100)
+      .map((p) => ({ id: `prop:${p.key}`, label: p.key, group: "Unmapped properties", mapped: true, optional: true })),
   ];
+  const days = (pick: (s: OrderStats) => string | null) => orders.map(pick).filter((d): d is string => !!d).sort();
   return c.json({
     dimensions,
     stores: stores.results,
-    range: range.results[0],
+    range: { first_day: days((s) => s.first_day)[0] ?? null, last_day: days((s) => s.last_day).pop() ?? null, orders: orders.reduce((n, s) => n + s.orders, 0) },
     reportingCurrency: settingMap.reporting_currency ?? "AUD",
     orderTag: orderTag(c.env) || null,
   });
@@ -294,11 +343,35 @@ app.put("/api/settings", async (c) => {
   return c.json({ ok: true });
 });
 
-app.post("/api/report", async (c) => {
-  const req = await c.req.json<ReportRequest>();
-  const q = buildReport(req);
-  const [rows, totals] = await c.env.DB.batch([c.env.DB.prepare(q.sql).bind(...q.params), c.env.DB.prepare(q.totalsSql).bind(...q.totalsParams)]);
-  return c.json({ rows: rows.results, totals: totals.results[0] ?? null });
+/**
+ * Any number of reports over the same filters, from one read of the matching line items. The
+ * Overview page asks for all of its charts at once, so it costs one read rather than one per chart.
+ */
+app.post("/api/reports", async (c) => {
+  const body = await c.req.json<ReportBase & { reports?: ReportSpec[] }>();
+  // Spelled out field by field so the same question always has the same cache key.
+  const base: ReportBase = {
+    from: body.from || null,
+    to: body.to || null,
+    search: body.search?.trim() || null,
+    includeCancelled: !!body.includeCancelled,
+    filters: (Array.isArray(body.filters) ? body.filters : []).filter((f) => f?.values?.length).map((f) => ({ dim: String(f.dim), values: f.values.map(String) })),
+  };
+  const specs: ReportSpec[] = (Array.isArray(body.reports) ? body.reports : []).map((r) => ({
+    groupBy: (Array.isArray(r?.groupBy) ? r.groupBy : []).map(String),
+    includeMissing: !!r?.includeMissing,
+    limit: Number(r?.limit) || 0,
+  }));
+  // A bad request is turned away here, before anything is read.
+  const plan = planReports(base, specs);
+  const json = await cached(c.env, c.executionCtx, `report:${await digest([base, specs])}`, "view", async () => {
+    const results = await c.env.DB.batch(plan.statements.map((s) => c.env.DB.prepare(s.sql).bind(...s.params)));
+    return finishReports(
+      plan,
+      results.map((r) => r.results),
+    );
+  });
+  return c.body(`{"reports":${json}}`, 200, { "Content-Type": "application/json" });
 });
 
 /** Everything imported, one row per line item, as a CSV download. */

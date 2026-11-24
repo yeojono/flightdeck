@@ -5,9 +5,10 @@ import { DatabaseSync } from "node:sqlite";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateJsonl } from "../scripts/mock-data.mjs";
 import { type Carry, SWEEP_UNSEEN, hasTag, importScope, makeDayFormatter, parseJsonl, writeParsed } from "../worker/ingest";
-import { type ReportRequest, WHEELS_PER_UNIT, buildReport } from "../worker/report";
+import { type ReportRequest, WHEELS_PER_UNIT } from "../worker/report";
 import { buildBulkQuery, orderTag } from "../worker/shopify";
 import { cleanValue, wheelKind } from "../worker/wheels";
+import { runReport } from "./run-report";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 const day = makeDayFormatter("UTC");
@@ -197,8 +198,7 @@ function upgradedDb() {
 }
 const dimId = (db: DatabaseSync, name: string) => (db.prepare("SELECT id FROM dimensions WHERE name = ?").get(name) as any)?.id as number;
 function report(db: DatabaseSync, req: ReportRequest) {
-  const q = buildReport(req);
-  return Object.fromEntries((db.prepare(q.sql).all(...(q.params as any[])) as any[]).map((r) => [r.g2 === undefined ? r.g1 : `${r.g1} | ${r.g2}`, r.units]));
+  return Object.fromEntries(runReport(db, req).rows.map((r) => [r.g2 === undefined ? r.g1 : `${r.g1} | ${r.g2}`, r.units]));
 }
 
 describe("upgrade migration", () => {

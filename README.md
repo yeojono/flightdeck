@@ -84,6 +84,10 @@ Run `pnpm run db:migrate` before deploying. It adds the columns this needs, crea
 
 After the deploy each store shows "Import settings changed". Its next sync, whether you press **Sync now** or wait for the scheduled one, runs as a full resync: it imports the orders tagged `wheels`, reads their values with the new rules, and when it finishes removes the orders that are not tagged. Until then the reports show the data as it was. If a store has no orders with the tag, that sync fails with a message and its data is left as it is.
 
+### Upgrading to single-read reports
+
+Run `pnpm run db:migrate` before deploying. It adds the table that report answers are kept in. Nothing is re-imported. If you deploy first, the app still works; it just works every report out afresh until the migration has run.
+
 ## 2. Create the Shopify app (Dev Dashboard)
 
 The app authenticates with the **client credentials grant**: it exchanges the app’s Client ID and Client secret for a 24-hour Admin API token and renews it automatically. Shopify only allows this when **the app and the store are in the same organisation**.
@@ -176,7 +180,7 @@ To try it without a real store, uncomment `SHOPIFY_ORIGIN_OVERRIDE` in `.dev.var
 
 Local dev skips Cloudflare Access: the `access.dev` block in `wrangler.jsonc` makes every request count as signed in as `dev@localhost`.
 
-`pnpm test` runs the import and report SQL against SQLite with generated data. `pnpm run typecheck` checks types.
+`pnpm test` runs the import SQL and the reports against SQLite with generated data. `pnpm run typecheck` checks types.
 
 ## Project layout
 
@@ -187,7 +191,8 @@ worker/sync.ts      the import Workflow (start export, wait, import in chunks, r
 worker/ingest.ts    parses the export, keeps tagged orders, and writes rows to D1
 worker/values.ts    cleaning that applies to every property value (case, spacing, quote and inch marks)
 worker/wheels.ts    wheelset or single wheel from the product title, and the value rules that depend on it
-worker/report.ts    builds the aggregate SQL behind every chart
+worker/report.ts    reads the matching line items once per request and groups them into every chart asked for
+worker/cache.ts     keeps report answers until the data or the mappings change
 worker/export.ts    the whole database as one CSV, a row per line item
 worker/auth.ts      Cloudflare Access check on every API request
 worker/access.ts    Access JWT verification (only for a hostname-based Access application)
@@ -215,3 +220,4 @@ scripts/            mock Shopify server for local testing
 - D1 databases hold up to 10 GB on the paid plan. As a rough guide, 100,000 orders with properties is in the low hundreds of MB.
 - Deleted orders in Shopify are not removed by incremental syncs. A **Full resync** re-imports everything and then removes whatever Shopify no longer returned. The store’s existing data stays visible while it runs.
 - Reports return at most 20,000 group combinations.
+- D1 counts every row a query steps over ("rows read"), and the free plan allows 5 million a day. A page of charts is one read of the line items in the selected date range plus their properties, however many charts it shows, and asking the same thing again is answered from the `cache` table for a handful of rows until the next import or mapping change. The grouping itself runs in the Worker, so its CPU time grows with the number of line items in the range.

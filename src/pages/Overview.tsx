@@ -1,10 +1,14 @@
 import type { AppContext } from "../App";
 import { ReportChart } from "../components/Charts";
 import { FilterBar } from "../components/FilterBar";
-import { type Metric, formatCompact, metricLabel, timeGrain, toRequest, useReport, useTheme } from "../lib";
+import type { Report } from "../api";
+import { type Metric, formatCompact, metricLabel, timeGrain, toBase, useReports, useTheme } from "../lib";
 
 interface CardProps {
   ctx: AppContext;
+  /** The chart's report. All of the page's reports arrive together, in one request. */
+  data: Report | undefined;
+  loading: boolean;
   /** Either a full title, or `by`: what the chart is broken down by, titled "Wheels by ..." */
   title?: string;
   by?: string;
@@ -14,9 +18,8 @@ interface CardProps {
   onOpen: (shown: Metric) => void;
 }
 
-function Card({ ctx, title, by, dim, metric: wanted, time, onOpen }: CardProps) {
+function Card({ ctx, data, loading, title, by, dim, metric: wanted, time, onOpen }: CardProps) {
   const theme = useTheme();
-  const { data, loading, error } = useReport(toRequest(ctx.filters, { groupBy: [dim], limit: time ? 2000 : 500 }));
   // Valve colours and rebuild rims are on products that count as 0 wheels: chart those in units rather than as a row of zeros.
   const noWheels = wanted === "wheels" && !!data?.rows.length && data.rows.every((r) => !r.wheels) && data.rows.some((r) => r.units > 0);
   const metric: Metric = noWheels ? "units" : wanted;
@@ -29,7 +32,6 @@ function Card({ ctx, title, by, dim, metric: wanted, time, onOpen }: CardProps) 
           Explore
         </button>
       </header>
-      {error && <div className="banner error">{error}</div>}
       <div className={loading ? "stale" : ""}>
         {data && (
           <ReportChart
@@ -45,7 +47,7 @@ function Card({ ctx, title, by, dim, metric: wanted, time, onOpen }: CardProps) 
             height={time ? 260 : undefined}
           />
         )}
-        {!data && !error && <div className="empty">Loading…</div>}
+        {!data && loading && <div className="empty">Loading…</div>}
       </div>
     </section>
   );
@@ -53,9 +55,16 @@ function Card({ ctx, title, by, dim, metric: wanted, time, onOpen }: CardProps) 
 
 export function Overview(ctx: AppContext) {
   const { meta, filters, setFilters, go } = ctx;
-  const totals = useReport(toRequest(filters, { groupBy: [] }));
   const grain = timeGrain(filters);
   const attrs = meta.dimensions.filter((d) => d.group === "Attributes" && d.mapped);
+  // Everything on the page in one request. The chart over time keeps its name when its grain changes, so it stays on screen while reloading.
+  const breakdowns = ["wheel_type", ...attrs.map((d) => d.id), "country", "province"];
+  const reports = useReports<string>(toBase(filters), {
+    totals: { groupBy: [] },
+    time: { groupBy: [grain], limit: 2000 },
+    ...Object.fromEntries(breakdowns.map((dim) => [dim, { groupBy: [dim], limit: 500 }])),
+  });
+  const card = (dim: string) => ({ ctx, dim, data: reports.data?.[dim], loading: reports.loading, metric: "wheels" as const });
   const unmapped = meta.dimensions.filter((d) => d.group === "Attributes" && !d.mapped);
   const stale = meta.stores.filter((s) => s.needs_resync);
 
@@ -85,7 +94,7 @@ export function Overview(ctx: AppContext) {
     );
   }
 
-  const t = totals.data?.totals;
+  const t = reports.data?.totals?.totals;
   const tiles: Array<{ label: string; value: string }> = [
     { label: "Wheels sold", value: t ? formatCompact(t.wheels ?? 0, "wheels", meta.reportingCurrency) : "-" },
     { label: "Orders", value: t ? formatCompact(t.orders ?? 0, "orders", meta.reportingCurrency) : "-" },
@@ -110,7 +119,8 @@ export function Overview(ctx: AppContext) {
           <a href="#/attributes">Attributes</a> page to see them here.
         </div>
       )}
-      <div className={`tiles${totals.loading ? " stale" : ""}`}>
+      {reports.error && <div className="banner error">{reports.error}</div>}
+      <div className={`tiles${reports.loading ? " stale" : ""}`}>
         {tiles.map((x) => (
           <div className="tile" key={x.label}>
             <div className="tile-label">{x.label}</div>
@@ -119,13 +129,13 @@ export function Overview(ctx: AppContext) {
         ))}
       </div>
       <div className="grid">
-        <Card ctx={ctx} title={`Wheels sold by ${grain}`} dim={grain} metric="wheels" time onOpen={() => open(grain)} />
-        <Card ctx={ctx} by="wheel type" dim="wheel_type" metric="wheels" onOpen={(m) => open("wheel_type", m)} />
+        <Card {...card(grain)} data={reports.data?.time} title={`Wheels sold by ${grain}`} time onOpen={() => open(grain)} />
+        <Card {...card("wheel_type")} by="wheel type" onOpen={(m) => open("wheel_type", m)} />
         {attrs.map((d) => (
-          <Card key={d.id} ctx={ctx} by={d.label.toLowerCase()} dim={d.id} metric="wheels" onOpen={(m) => open(d.id, m)} />
+          <Card key={d.id} {...card(d.id)} by={d.label.toLowerCase()} onOpen={(m) => open(d.id, m)} />
         ))}
-        <Card ctx={ctx} by="country" dim="country" metric="wheels" onOpen={(m) => open("country", m)} />
-        <Card ctx={ctx} by="state / province" dim="province" metric="wheels" onOpen={(m) => open("province", m)} />
+        <Card {...card("country")} by="country" onOpen={(m) => open("country", m)} />
+        <Card {...card("province")} by="state / province" onOpen={(m) => open("province", m)} />
       </div>
       {unmapped.length > 0 && attrs.length > 0 && (
         <p className="hint">

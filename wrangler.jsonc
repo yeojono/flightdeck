@@ -26,6 +26,9 @@
     { "name": "flightdeck-sync", "binding": "SYNC", "class_name": "SyncWorkflow" }
   ],
 
+  // The deployed version's id. Cached report answers are tied to it, so a deploy starts afresh.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+
   // Incremental sync of every connected store, every 6 hours.
   "triggers": { "crons": ["0 */6 * * *"] },
 

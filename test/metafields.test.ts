@@ -4,8 +4,9 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { generateJsonl } from "../scripts/mock-data.mjs";
 import { INSERT_LINE_ITEMS, INSERT_ORDERS, INSERT_PROPS, importScope, makeDayFormatter, metafieldText, parseJsonl } from "../worker/ingest";
-import { type ReportRequest, buildReport } from "../worker/report";
+import type { ReportRequest } from "../worker/report";
 import { buildBulkQuery, productMetafields } from "../worker/shopify";
+import { runReport } from "./run-report";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 const MIGRATIONS = ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0005_product_metafields.sql"];
@@ -99,10 +100,7 @@ describe("Hub set and Rim set attributes", () => {
   db.prepare(INSERT_PROPS).run(1, JSON.stringify(p.props));
 
   const dimId = (name: string) => (db.prepare("SELECT id FROM dimensions WHERE name = ?").get(name) as { id: number }).id;
-  const report = (req: ReportRequest) => {
-    const q = buildReport(req);
-    return { rows: db.prepare(q.sql).all(...(q.params as any[])) as any[], totals: db.prepare(q.totalsSql).get(...(q.totalsParams as any[])) as any };
-  };
+  const report = (req: ReportRequest) => runReport(db, req) as { rows: any[]; totals: any };
 
   // Tally straight from the export: wheelsets carry the metafields, single wheels and add-ons do not.
   const expected = new Map<string, number>();

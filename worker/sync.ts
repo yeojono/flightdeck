@@ -1,5 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
+import { BUMP_DATA, pruneCache } from "./cache";
 import type { Env, StoreRow, SyncParams } from "./env";
 import { type Carry, SWEEP_UNSEEN, completeLineBytes, importScope, makeDayFormatter, parseJsonl, writeParsed } from "./ingest";
 import { BULK_START, BULK_STATUS, type ProductMetafield, SHOP_INFO, ShopifyError, buildBulkQuery, getAccessToken, gql, hasScope, orderTag, productMetafields } from "./shopify";
@@ -247,7 +248,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
             warnings.push(`No orders tagged “${prep.tag}” were found in this store.`);
           }
           // Everything this run did not write is gone from Shopify or no longer tagged.
-          await env.DB.batch(SWEEP_UNSEEN.map((sql) => env.DB.prepare(sql).bind(storeId, runId)));
+          await env.DB.batch([...SWEEP_UNSEEN.map((sql) => env.DB.prepare(sql).bind(storeId, runId)), env.DB.prepare(BUMP_DATA)]);
           await env.DB.prepare("UPDATE stores SET sync_scope = ? WHERE id = ?").bind(prep.scope, storeId).run();
         }
         const warning = warnings.length ? warnings.join(" ") : null;
@@ -256,6 +257,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         await markRun(env, storeId, runId, "complete", warning);
         // Refresh the query planner's statistics now that the data has changed.
         await env.DB.prepare("PRAGMA optimize").run().catch(() => {});
+        await pruneCache(env.DB);
       });
       return { orders, lineItems };
     } catch (err) {

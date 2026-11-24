@@ -1,10 +1,15 @@
 /**
- * Builds the aggregate SQL behind every chart and table.
+ * Works out every chart and table.
  *
  * A "dimension" is anything you can group or filter by:
  *   - built-ins:  store, country, province, product, product_type, month, ...
  *   - dim:<id>    a named attribute (e.g. Rim) fed by one or more line item property keys
  *   - prop:<key>  a raw line item property key
+ *
+ * D1 bills every row a statement steps over, including the rows of its own sorts and temporary
+ * tables, so a GROUP BY per chart costs a full pass per chart. Instead, one statement reads the
+ * matching line items once (planReports) and the grouping is done here in the Worker
+ * (finishReports). Any number of charts that share the same filters share that one read.
  */
 
 import { normaliseValue } from "./values";
@@ -15,24 +20,63 @@ export interface ReportFilter {
   values: string[];
 }
 
-export interface ReportRequest {
-  groupBy: string[];
+/** What is counted: the filters every report in a request shares. */
+export interface ReportBase {
   filters?: ReportFilter[];
   from?: string | null;
   to?: string | null;
   search?: string | null;
   includeCancelled?: boolean;
+}
+
+/** How it is broken down. */
+export interface ReportSpec {
+  groupBy: string[];
   /** Keep line items that have no value for a grouped attribute (shown as "(not set)"). */
   includeMissing?: boolean;
   limit?: number;
 }
 
-export interface BuiltQuery {
+export interface ReportRequest extends ReportBase, ReportSpec {}
+
+export interface ReportRow {
+  g1?: string;
+  g2?: string;
+  /** Wheels sold: a wheelset counts as 2, a single front or rear wheel as 1, anything else as 0. */
+  wheels: number;
+  units: number;
+  orders: number;
+  revenue: number;
+  line_items: number;
+}
+
+export interface ReportResult {
+  rows: ReportRow[];
+  totals: ReportRow;
+}
+
+export interface Statement {
   sql: string;
   params: unknown[];
-  totalsSql: string;
-  totalsParams: unknown[];
 }
+
+/** Where each grouped dimension's value comes from: a column of the line item read, or its properties. */
+type Source = { column: string } | { dimId: number } | { prop: string };
+
+export interface ReportPlan {
+  /** Run these in one batch, in order, and hand the rows of each to finishReports. */
+  statements: Statement[];
+  /** Every dimension the reports and attribute filters use, each worked out once per line item. */
+  sources: Source[];
+  /** Per report: which sources it groups by, and whether a line item without a value is left out. */
+  specs: Array<{ group: number[]; required: boolean[]; time: boolean; limit: number }>;
+  /** Attribute filters, applied to the rows read: the source and the folded values it accepts. */
+  attributeFilters: Array<{ source: number; accept: Set<string> }>;
+  hasProps: boolean;
+}
+
+/** The most reports one request can ask for. */
+export const MAX_REPORTS = 40;
 
 export const TIME_DIMS = ["day", "week", "month", "quarter", "year"] as const;
 
@@ -101,91 +145,297 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ReportError extends Error {}
 
-export function buildReport(req: ReportRequest): BuiltQuery {
-  const grouped = compose(req, true);
-  // Totals use the same filters. They are built separately so each statement binds exactly the parameters it uses.
-  const totals = compose(req, false);
-  return { sql: grouped.sql, params: grouped.params, totalsSql: totals.sql, totalsParams: totals.params };
+/** Which property keys feed which attribute, and the values combined by hand. Both are small tables. */
+const DIMENSION_KEYS = "SELECT key, dimension_id FROM dimension_keys ORDER BY dimension_id, key";
+const VALUE_GROUPS = "SELECT dimension_id, value, label FROM value_groups";
+
+function source(id: string): Source | null {
+  if (id.startsWith("dim:")) {
+    const dimId = Number(id.slice(4));
+    if (!Number.isInteger(dimId)) throw new ReportError(`Unknown dimension ${id}`);
+    return { dimId };
+  }
+  if (id.startsWith("prop:")) return { prop: id.slice(5) };
+  return null;
 }
 
-function compose(req: ReportRequest, withGroups: boolean): { sql: string; params: unknown[] } {
+/**
+ * Plans one read of the line items that match `base`, carrying what every report in `specs` needs.
+ * Built-in dimensions are worked out in SQL and attributes from the line item's properties, which
+ * come back as one JSON object per line item.
+ */
+export function planReports(base: ReportBase, specs: ReportSpec[]): ReportPlan {
+  if (!Array.isArray(specs) || !specs.length) throw new ReportError("Nothing to report");
+  if (specs.length > MAX_REPORTS) throw new ReportError(`At most ${MAX_REPORTS} reports per request`);
+
   const params: unknown[] = [];
   const bind = (v: unknown) => {
     params.push(v);
     return `?${params.length}`;
   };
-
-  // Each distinct dimension is bound once and its SQL reused in SELECT and WHERE.
-  const cache = new Map<string, string>();
-  const expr = (id: string): string => {
-    const hit = cache.get(id);
-    if (hit) return hit;
-    let sql: string;
-    if (id.startsWith("dim:")) {
-      const dimId = Number(id.slice(4));
-      if (!Number.isInteger(dimId)) throw new ReportError(`Unknown dimension ${id}`);
-      // The cleaned value, or the label it was combined under on the Attributes page.
-      sql = `(SELECT COALESCE(g.label, p.norm, p.value) FROM line_item_props p JOIN dimension_keys k ON k.key = p.key
-              LEFT JOIN value_groups g ON g.dimension_id = k.dimension_id AND g.value = COALESCE(p.norm, p.value)
-              WHERE p.store_id = li.store_id AND p.line_item_id = li.id AND k.dimension_id = ${bind(dimId)} LIMIT 1)`;
-    } else if (id.startsWith("prop:")) {
-      sql = `(SELECT COALESCE(p.norm, p.value) FROM line_item_props p
-              WHERE p.store_id = li.store_id AND p.line_item_id = li.id AND p.key = ${bind(id.slice(5))})`;
-    } else {
-      const b = BUILTIN_DIMS.find((d) => d.id === id);
-      if (!b) throw new ReportError(`Unknown dimension ${id}`);
-      sql = b.sql;
-    }
-    cache.set(id, sql);
-    return sql;
+  const builtin = (id: string) => {
+    const b = BUILTIN_DIMS.find((d) => d.id === id);
+    if (!b) throw new ReportError(`Unknown dimension ${id}`);
+    return b;
   };
 
-  const groupBy = (req.groupBy ?? []).slice(0, 2);
-  if (new Set(groupBy).size !== groupBy.length) throw new ReportError("Group by and split by must be different");
+  // Each dimension is read once per line item, however many reports use it.
+  const sources: Source[] = [];
+  const slots = new Map<string, number>();
+  const columns = new Map<string, string>();
+  let hasProps = false;
+  const slotOf = (id: string): number => {
+    let slot = slots.get(id);
+    if (slot === undefined) {
+      const attribute = source(id);
+      if (attribute) hasProps = true;
+      else if (builtin(id)) columns.set(id, `b${columns.size}`);
+      slots.set(id, (slot = sources.push(attribute ?? { column: columns.get(id)! }) - 1));
+    }
+    return slot;
+  };
 
   const where: string[] = ["o.test = 0"];
-  if (!req.includeCancelled) where.push("o.cancelled = 0");
-  if (req.from) {
-    if (!DAY.test(req.from)) throw new ReportError("Invalid from date");
-    where.push(`o.day >= ${bind(req.from)}`);
+  if (!base.includeCancelled) where.push("o.cancelled = 0");
+  if (base.from) {
+    if (!DAY.test(base.from)) throw new ReportError("Invalid from date");
+    where.push(`o.day >= ${bind(base.from)}`);
   }
-  if (req.to) {
-    if (!DAY.test(req.to)) throw new ReportError("Invalid to date");
-    where.push(`o.day <= ${bind(req.to)}`);
+  if (base.to) {
+    if (!DAY.test(base.to)) throw new ReportError("Invalid to date");
+    where.push(`o.day <= ${bind(base.to)}`);
   }
-  if (req.search?.trim()) {
-    const like = "%" + req.search.trim().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
+  if (base.search?.trim()) {
+    const like = "%" + base.search.trim().replace(/[\\%_]/g, (c) => "\\" + c) + "%";
     where.push(`(li.title LIKE ${bind(like)} ESCAPE '\\' OR li.sku LIKE ?${params.length} ESCAPE '\\')`);
   }
-  for (const f of req.filters ?? []) {
+  const attributeFilters: ReportPlan["attributeFilters"] = [];
+  for (const f of base.filters ?? []) {
     if (!f?.values?.length) continue;
-    // Attribute values are matched as typed and as cleaned, so a saved filter for 29" still finds 29.
     const values = f.values.map(String);
-    if (isAttributeDim(f.dim)) values.push(...values.map(normaliseValue));
-    where.push(`${expr(f.dim)} COLLATE NOCASE IN (SELECT value FROM json_each(${bind(JSON.stringify([...new Set(values)]))}))`);
-  }
-  for (const id of groupBy) {
-    if (isOptionalDim(id) && !req.includeMissing) where.push(`${expr(id)} IS NOT NULL`);
+    if (isAttributeDim(f.dim)) {
+      // Attribute values are matched as typed and as cleaned, so a saved filter for 29" still finds 29.
+      attributeFilters.push({ source: slotOf(f.dim), accept: new Set([...values, ...values.map(normaliseValue)].map(fold)) });
+    } else {
+      where.push(`${builtin(f.dim).sql} COLLATE NOCASE IN (SELECT value FROM json_each(${bind(JSON.stringify([...new Set(values)]))}))`);
+    }
   }
 
-  const metrics = `
-    SUM(li.current_quantity * ${WHEELS_PER_UNIT}) AS wheels,
-    SUM(li.current_quantity) AS units,
-    COUNT(DISTINCT li.store_id || ':' || li.order_id) AS orders,
-    ROUND(SUM(CASE WHEN li.quantity > 0 THEN li.total * li.current_quantity / li.quantity ELSE 0 END * s.fx_rate), 2) AS revenue,
-    COUNT(*) AS line_items`;
-  const from = `
+  const planned = specs.map((spec) => {
+    const groupBy = (spec?.groupBy ?? []).slice(0, 2).map(String);
+    if (new Set(groupBy).size !== groupBy.length) throw new ReportError("Group by and split by must be different");
+    return {
+      group: groupBy.map(slotOf),
+      // A line item with no value for a grouped attribute is left out unless asked for.
+      required: groupBy.map((id) => isOptionalDim(id) && !spec.includeMissing),
+      time: groupBy.length > 0 && isTimeDim(groupBy[0]),
+      limit: Math.min(Math.max(Number(spec.limit) || 5000, 1), 20000),
+    };
+  });
+
+  const select = [
+    `li.current_quantity * ${WHEELS_PER_UNIT} AS w`,
+    "li.current_quantity AS u",
+    "CASE WHEN li.quantity > 0 THEN li.total * li.current_quantity / li.quantity ELSE 0 END * s.fx_rate AS r",
+    "li.store_id AS s",
+    "li.order_id AS o",
+    ...[...columns].map(([id, name]) => `${builtin(id).sql} AS ${name}`),
+  ];
+  // One range read of the line item's properties, instead of a lookup per attribute per chart.
+  if (hasProps) {
+    select.push(`(SELECT json_group_object(p.key, COALESCE(p.norm, p.value)) FROM line_item_props p
+      WHERE p.store_id = li.store_id AND p.line_item_id = li.id) AS p`);
+  }
+  const facts = `SELECT ${select.join(",\n    ")}
     FROM line_items li
     JOIN orders o ON o.store_id = li.store_id AND o.id = li.order_id
     JOIN stores s ON s.id = li.store_id
     WHERE ${where.join("\n      AND ")}`;
 
-  if (!withGroups || !groupBy.length) return { sql: `SELECT${metrics}${from}`, params };
+  const statements: Statement[] = [{ sql: facts, params }];
+  if (hasProps) statements.push({ sql: DIMENSION_KEYS, params: [] }, { sql: VALUE_GROUPS, params: [] });
+  return { statements, sources, specs: planned, attributeFilters, hasProps };
+}
 
-  const selects = groupBy.map((id, i) => `COALESCE(${expr(id)}, '(not set)') AS g${i + 1}`);
-  const groups = groupBy.map((id, i) => (isTimeDim(id) ? `g${i + 1}` : `g${i + 1} COLLATE NOCASE`));
-  const limit = Math.min(Math.max(Number(req.limit) || 5000, 1), 20000);
-  const order = isTimeDim(groupBy[0]) ? "g1 ASC, wheels DESC, units DESC" : "wheels DESC, units DESC";
-  const sql = `SELECT ${selects.join(", ")},${metrics}${from}\n    GROUP BY ${groups.join(", ")}\n    ORDER BY ${order}\n    LIMIT ${limit}`;
-  return { sql, params };
+/** Lower-cases A to Z only, which is how SQLite's NOCASE (and so the value_groups table) compares text. */
+function fold(s: string): string {
+  return /[A-Z]/.test(s) ? s.replace(/[A-Z]+/g, (m) => m.toLowerCase()) : s;
+}
+
+const NOT_SET = "(not set)";
+
+/** The distinct values of one dimension, numbered. Spellings that differ only by case share a number. */
+class Values {
+  private ids = new Map<string, number>();
+  private spellings = new Map<string, { id: number; count: number }>();
+  private notSet = -1;
+
+  id(value: string): number {
+    let seen = this.spellings.get(value);
+    if (!seen) {
+      const key = fold(value);
+      let id = this.ids.get(key);
+      if (id === undefined) this.ids.set(key, (id = this.ids.size));
+      this.spellings.set(value, (seen = { id, count: 0 }));
+    }
+    seen.count++;
+    return seen.id;
+  }
+  /** Where line items with no value are counted. A real value spelled "(not set)" lands there too. */
+  missing(): number {
+    if (this.notSet < 0) this.notSet = this.id(NOT_SET);
+    return this.notSet;
+  }
+  /** Each value under its most common spelling. */
+  names(): string[] {
+    const best: Array<{ name: string; count: number }> = [];
+    for (const [name, { id, count }] of this.spellings) {
+      const b = best[id];
+      if (!b || count > b.count || (count === b.count && name < b.name)) best[id] = { name, count };
+    }
+    return best.map((b) => b.name);
+  }
+  get size(): number {
+    return this.ids.size;
+  }
+}
+
+interface Tally {
+  ids: number[];
+  wheels: number;
+  units: number;
+  revenue: number;
+  orders: number;
+  lastOrder: number;
+  line_items: number;
+}
+const tally = (ids: number[] = []): Tally => ({ ids, wheels: 0, units: 0, revenue: 0, orders: 0, lastOrder: -1, line_items: 0 });
+const totalsOf = (t: Tally) => ({ wheels: t.wheels, units: t.units, orders: t.orders, revenue: Number(t.revenue.toFixed(2)), line_items: t.line_items });
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Turns the rows of a plan's statements into its reports, in the order they were asked for.
+ * Values are grouped ignoring case (A to Z). Rows are ordered by wheels then units, or by date
+ * first when the report is over time.
+ */
+export function finishReports(plan: ReportPlan, results: unknown[][]): ReportResult[] {
+  const facts = results[0] as Array<Record<string, unknown>>;
+
+  // An attribute takes the first of its keys (in name order) that the line item carries, and shows
+  // the cleaned value or the label it was combined under on the Attributes page.
+  const keysOf = new Map<number, string[]>();
+  const labels = new Map<string, string>();
+  if (plan.hasProps) {
+    for (const k of results[1] as Array<{ key: string; dimension_id: number }>) {
+      keysOf.set(k.dimension_id, [...(keysOf.get(k.dimension_id) ?? []), k.key]);
+    }
+    for (const g of results[2] as Array<{ dimension_id: number; value: string; label: string }>) labels.set(`${g.dimension_id}\n${fold(g.value)}`, g.label);
+  }
+  const readers = plan.sources.map((src): ((row: Record<string, unknown>, props: Record<string, string> | null) => string | null) => {
+    if ("column" in src) {
+      const { column } = src;
+      return (row) => (row[column] == null ? null : String(row[column]));
+    }
+    if ("prop" in src) {
+      const { prop } = src;
+      return (_, props) => props?.[prop] ?? null;
+    }
+    const { dimId } = src;
+    const keys = keysOf.get(dimId) ?? [];
+    const shown = new Map<string, string>();
+    return (_, props) => {
+      if (!props) return null;
+      for (const key of keys) {
+        const value = props[key];
+        if (value === undefined) continue;
+        let label = shown.get(value);
+        if (label === undefined) shown.set(value, (label = labels.get(`${dimId}\n${fold(value)}`) ?? value));
+        return label;
+      }
+      return null;
+    };
+  });
+
+  // Pass 1: every line item that passes the attribute filters, as numbers. ids[s][n] is the value
+  // line item n has for source s, or -1 for none.
+  const sources = plan.sources;
+  const values = sources.map(() => new Values());
+  const ids = sources.map(() => new Int32Array(facts.length));
+  const wheels = new Float64Array(facts.length);
+  const units = new Float64Array(facts.length);
+  const revenue = new Float64Array(facts.length);
+  const order = new Int32Array(facts.length);
+  const orderNumbers = new Map<string, number>();
+  const found: Array<string | null> = new Array(sources.length);
+  let count = 0;
+  let inOrder = true;
+  rows: for (const row of facts) {
+    const props = plan.hasProps && row.p && row.p !== "{}" ? (JSON.parse(row.p as string) as Record<string, string>) : null;
+    for (let s = 0; s < sources.length; s++) found[s] = readers[s](row, props);
+    for (const f of plan.attributeFilters) {
+      const v = found[f.source];
+      if (v === null || !f.accept.has(fold(v))) continue rows;
+    }
+    for (let s = 0; s < sources.length; s++) ids[s][count] = found[s] === null ? -1 : values[s].id(found[s]!);
+    const orderKey = `${row.s}:${row.o}`;
+    let number = orderNumbers.get(orderKey);
+    if (number === undefined) orderNumbers.set(orderKey, (number = orderNumbers.size));
+    else if (number !== order[count - 1]) inOrder = false;
+    order[count] = number;
+    wheels[count] = Number(row.w) || 0;
+    units[count] = Number(row.u) || 0;
+    revenue[count] = Number(row.r) || 0;
+    count++;
+  }
+  // Orders are counted by noticing when the order changes, so an order's line items must sit together.
+  // They do in the order the database reads them; if that ever changes, put them together here.
+  const sequence = Array.from({ length: count }, (_, n) => n);
+  if (!inOrder) sequence.sort((a, b) => order[a] - order[b]);
+
+  // Pass 2: one loop over those line items per report.
+  return plan.specs.map((spec) => {
+    const [first, second] = spec.group;
+    const missing = spec.group.map((s, n) => (spec.required[n] ? -1 : values[s].missing()));
+    const width = second === undefined ? 1 : values[second].size + 1;
+    const groups = new Map<number, Tally>();
+    const totals = tally();
+    const add = (t: Tally, n: number) => {
+      t.wheels += wheels[n];
+      t.units += units[n];
+      t.revenue += revenue[n];
+      t.line_items++;
+      if (t.lastOrder !== order[n]) {
+        t.lastOrder = order[n];
+        t.orders++;
+      }
+    };
+    for (const n of sequence) {
+      if (first !== undefined) {
+        let a = ids[first][n];
+        if (a < 0 && (a = missing[0]) < 0) continue;
+        let b = 0;
+        if (second !== undefined) {
+          b = ids[second][n];
+          if (b < 0 && (b = missing[1]) < 0) continue;
+        }
+        const key = a * width + b;
+        let group = groups.get(key);
+        if (!group) groups.set(key, (group = tally(second === undefined ? [a] : [a, b])));
+        add(group, n);
+      }
+      add(totals, n);
+    }
+
+    const total = totalsOf(totals);
+    // With nothing to group by, the one row is the total.
+    if (first === undefined) return { rows: [total], totals: total };
+    const names = spec.group.map((s) => values[s].names());
+    const rows = [...groups.values()].map((t): ReportRow => {
+      const row: ReportRow = { g1: names[0][t.ids[0]], ...totalsOf(t) };
+      if (second !== undefined) row.g2 = names[1][t.ids[1]];
+      return row;
+    });
+    rows.sort((a, b) => (spec.time ? compare(a.g1!, b.g1!) : 0) || b.wheels - a.wheels || b.units - a.units);
+    return { rows: rows.slice(0, spec.limit), totals: total };
+  });
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { type Report, type ReportFilter, type ReportRequest, type Row, runReport } from "./api";
+import { type Report, type ReportBase, type ReportFilter, type ReportRequest, type ReportSpec, type Row, runReports } from "./api";
 
 // ---------- Metrics & formatting ----------
 
@@ -125,14 +125,16 @@ export function timeGrain(f: FilterState): "day" | "week" | "month" {
   return "month";
 }
 
-export function toRequest(f: FilterState, extra: Partial<ReportRequest> & { groupBy: string[] }): ReportRequest {
+export function toBase(f: FilterState): ReportBase {
   return {
     ...dateRange(f),
     filters: f.filters.filter((x) => x.values.length),
     search: f.search || null,
     includeCancelled: f.includeCancelled,
-    ...extra,
   };
+}
+export function toRequest(f: FilterState, extra: Partial<ReportRequest> & { groupBy: string[] }): ReportRequest {
+  return { ...toBase(f), ...extra };
 }
 
 // ---------- Hooks ----------
@@ -156,18 +158,23 @@ export function useStored<T>(key: string, initial: T): [T, (v: T | ((prev: T) =>
   return [value, setValue];
 }
 
-/** Runs a report whenever the request changes. Keeps the previous result on screen while reloading. */
-export function useReport(req: ReportRequest | null): { data: Report | null; loading: boolean; error: string | null } {
-  const [state, setState] = useState<{ data: Report | null; loading: boolean; error: string | null }>({ data: null, loading: !!req, error: null });
-  const key = req ? JSON.stringify(req) : "";
+/**
+ * Runs several named reports over the same filters as one request, whenever any of it changes.
+ * Keeps the previous results on screen while reloading. Ask for everything a page shows in one
+ * call: the server reads the data once per request, however many reports it holds.
+ */
+export function useReports<K extends string>(base: ReportBase, specs: Record<K, ReportSpec>): { data: Partial<Record<K, Report>> | null; loading: boolean; error: string | null } {
+  const [state, setState] = useState<{ data: Partial<Record<K, Report>> | null; loading: boolean; error: string | null }>({ data: null, loading: true, error: null });
+  const key = JSON.stringify([base, specs]);
   useEffect(() => {
-    if (!key) return;
     const ctrl = new AbortController();
     setState((s) => ({ ...s, loading: true, error: null }));
     // Short delay so typing in a filter does not fire a request per keystroke.
     const timer = setTimeout(() => {
-      runReport(JSON.parse(key), ctrl.signal)
-        .then((data) => setState({ data, loading: false, error: null }))
+      const [sentBase, sentSpecs] = JSON.parse(key) as [ReportBase, Record<K, ReportSpec>];
+      const names = Object.keys(sentSpecs) as K[];
+      runReports(sentBase, names.map((n) => sentSpecs[n]), ctrl.signal)
+        .then((reports) => setState({ data: Object.fromEntries(names.map((n, i) => [n, reports[i]])) as Record<K, Report>, loading: false, error: null }))
         .catch((err) => {
           if (ctrl.signal.aborted) return;
           setState({ data: null, loading: false, error: err.message });
@@ -179,6 +186,12 @@ export function useReport(req: ReportRequest | null): { data: Report | null; loa
     };
   }, [key]);
   return state;
+}
+
+/** Runs one report whenever the request changes. */
+export function useReport({ groupBy, includeMissing, limit, ...base }: ReportRequest): { data: Report | null; loading: boolean; error: string | null } {
+  const { data, loading, error } = useReports(base, { report: { groupBy, includeMissing, limit } });
+  return { data: data?.report ?? null, loading, error };
 }
 
 export function useTheme(): Theme {
