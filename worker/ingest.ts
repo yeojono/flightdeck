@@ -1,3 +1,4 @@
+import { BUMP_DATA } from "./cache";
 import type { Env } from "./env";
 import { type ProductMetafield, orderTag, productMetafields } from "./shopify";
 import { RULES_VERSION, normColumn, wheelKind } from "./wheels";
@@ -256,7 +257,8 @@ export async function writeParsed(db: D1Database, storeId: number, runId: number
   for (const rows of slices(p.orders, 1000)) stmts.push(db.prepare(INSERT_ORDERS).bind(storeId, JSON.stringify(rows), runId));
   for (const rows of slices(p.lineItems, 1000)) stmts.push(db.prepare(INSERT_LINE_ITEMS).bind(storeId, JSON.stringify(rows)));
   for (const rows of slices(p.props, 2000)) stmts.push(db.prepare(INSERT_PROPS).bind(storeId, JSON.stringify(rows)));
-  if (stmts.length) await db.batch(stmts);
+  // Reports cached from the data as it was are out of date from here on.
+  if (stmts.length) await db.batch([...stmts, db.prepare(BUMP_DATA)]);
 }
 
 /**

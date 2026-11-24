@@ -5,8 +5,9 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { suggestWordGroups } from "../src/grouping";
 import { INSERT_LINE_ITEMS, INSERT_ORDERS, INSERT_PROPS, makeDayFormatter, parseJsonl } from "../worker/ingest";
-import { type ReportRequest, buildReport } from "../worker/report";
+import type { ReportRequest } from "../worker/report";
 import { normaliseValue } from "../worker/values";
+import { runReport } from "./run-report";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 
@@ -34,10 +35,7 @@ function load(db: DatabaseSync, values: Array<[key: string, value: string, qty: 
   db.prepare(INSERT_PROPS).run(1, JSON.stringify(p.props));
 }
 
-function report(db: DatabaseSync, req: ReportRequest) {
-  const q = buildReport(req);
-  return db.prepare(q.sql).all(...(q.params as any[])) as Array<{ g1: string; units: number }>;
-}
+const report = (db: DatabaseSync, req: ReportRequest) => runReport(db, req).rows as Array<{ g1: string; units: number }>;
 
 const COLOURS: Array<[string, string, number]> = [
   ["Hub Colour", "Black", 40],

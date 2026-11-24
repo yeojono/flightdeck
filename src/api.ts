@@ -26,16 +26,21 @@ export interface ReportFilter {
   dim: string;
   values: string[];
 }
-export interface ReportRequest {
-  groupBy: string[];
+/** What is counted: the filters every report in a request shares. */
+export interface ReportBase {
   filters?: ReportFilter[];
   from?: string | null;
   to?: string | null;
   search?: string | null;
   includeCancelled?: boolean;
+}
+/** How it is broken down. */
+export interface ReportSpec {
+  groupBy: string[];
   includeMissing?: boolean;
   limit?: number;
 }
+export interface ReportRequest extends ReportBase, ReportSpec {}
 export interface Row {
   g1?: string;
   g2?: string;
@@ -128,4 +133,8 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   return data as T;
 }
 
-export const runReport = (req: ReportRequest, signal?: AbortSignal) => api<Report>("/report", { body: req, signal });
+/** Several reports over the same filters in one request, which the server answers from one read of the data. */
+export const runReports = (base: ReportBase, reports: ReportSpec[], signal?: AbortSignal) =>
+  api<{ reports: Report[] }>("/reports", { body: { ...base, reports }, signal }).then((r) => r.reports);
+export const runReport = ({ groupBy, includeMissing, limit, ...base }: ReportRequest, signal?: AbortSignal) =>
+  runReports(base, [{ groupBy, includeMissing, limit }], signal).then((r) => r[0]);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { INSERT_LINE_ITEMS, INSERT_ORDERS, makeDayFormatter, parseJsonl } from "../worker/ingest";
-import { buildReport } from "../worker/report";
+import { runReport } from "./run-report";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
 
@@ -54,13 +54,7 @@ function load(items: Array<{ title: string; variant: string | null; qty: number;
   return db;
 }
 
-function report(db: DatabaseSync, groupBy: string[]) {
-  const q = buildReport({ groupBy });
-  return {
-    rows: db.prepare(q.sql).all(...(q.params as any[])) as Array<{ g1: string; wheels: number; units: number }>,
-    totals: db.prepare(q.totalsSql).get(...(q.totalsParams as any[])) as { wheels: number; units: number },
-  };
-}
+const report = (db: DatabaseSync, groupBy: string[]) => runReport(db, { groupBy });
 
 describe("wheels sold", () => {
   it.each(TITLES)("%s (%s) counts as %i", (title, variant, wheels) => {

@@ -15,10 +15,11 @@ import {
   normaliseKey,
   parseJsonl,
 } from "../worker/ingest";
-import { type ReportRequest, buildReport } from "../worker/report";
+import { type ReportRequest, type ReportSpec, finishReports, planReports } from "../worker/report";
 import { buildBulkQuery, hasScope, normaliseShop } from "../worker/shopify";
 import { normaliseValue } from "../worker/values";
 import { suggestWordGroups } from "../src/grouping";
+import { runReport } from "./run-report";
 
 const db = new DatabaseSync(":memory:");
 const numbered = (sql: string) => sql; // node:sqlite understands ?1 / ?2 like D1 does
@@ -45,13 +46,7 @@ function ingest(storeId: number, jsonl: string, tz: string, chunkBytes = 50_000)
   return orders;
 }
 
-function report(req: ReportRequest) {
-  const q = buildReport(req);
-  return {
-    rows: db.prepare(q.sql).all(...(q.params as any[])) as any[],
-    totals: db.prepare(q.totalsSql).get(...(q.totalsParams as any[])) as any,
-  };
-}
+const report = (req: ReportRequest) => runReport(db, req) as { rows: any[]; totals: any };
 
 const AU = generateJsonl("mock-au", { orders: 400 });
 const US = generateJsonl("mock-us", { orders: 300 });
@@ -179,9 +174,59 @@ describe("report", () => {
     expect(withMissing.rows.some((r) => r.g1 === "(not set)")).toBe(true);
   });
 
+  it("answers several reports from one read, the same as asking for each alone", () => {
+    const base = { from: "2026-01-01", filters: [{ dim: "dim:4", values: ['29" Set', "Mullet Set"] }, { dim: "country", values: ["Australia", "United States"] }] };
+    const specs: ReportSpec[] = [
+      { groupBy: [] },
+      { groupBy: ["month"], limit: 2000 },
+      { groupBy: ["wheel_type"] },
+      { groupBy: ["dim:1"] },
+      { groupBy: ["dim:1"], includeMissing: true },
+      { groupBy: ["dim:3", "province"] },
+      { groupBy: ["prop:rim choice", "dim:2"], includeMissing: true },
+      { groupBy: ["dim:2"], limit: 3 },
+    ];
+    const plan = planReports(base, specs);
+    // One statement reads the line items; the other two are the small mapping tables.
+    expect(plan.statements.length).toBe(3);
+    expect(planReports({}, [{ groupBy: ["month"] }, { groupBy: ["country"] }]).statements.length).toBe(1);
+    const together = finishReports(
+      plan,
+      plan.statements.map((st) => db.prepare(st.sql).all(...(st.params as any[]))),
+    );
+    expect(together.length).toBe(specs.length);
+    specs.forEach((spec, i) => expect(together[i]).toEqual(runReport(db, { ...base, ...spec })));
+    expect(together[0].rows).toEqual([together[0].totals]);
+    expect(together[7].rows.length).toBe(3);
+  });
+
+  it("counts an order once per group and once in the total", () => {
+    const raw = db
+      .prepare(`SELECT COUNT(DISTINCT li.store_id || ':' || li.order_id) AS orders, COUNT(*) AS line_items FROM line_items li
+                JOIN orders o ON o.store_id = li.store_id AND o.id = li.order_id WHERE o.test = 0 AND o.cancelled = 0`)
+      .get() as any;
+    const { rows, totals } = report({ groupBy: ["store"] });
+    expect(totals).toMatchObject(raw);
+    expect(rows.reduce((n, r) => n + r.orders, 0)).toBe(raw.orders);
+    // An order with several kinds of product is counted under each of them, but still once overall.
+    const byType = report({ groupBy: ["product_type"] });
+    expect(byType.totals.orders).toBe(raw.orders);
+    expect(byType.rows.reduce((n, r) => n + r.orders, 0)).toBeGreaterThan(raw.orders);
+  });
+
+  it("shows a value under its most common spelling", () => {
+    const { rows } = report({ groupBy: ["dim:3"] });
+    expect(rows.find((r) => r.g1.toLowerCase() === "black").g1).toBe("Black");
+  });
+
   it("rejects unknown dimensions and bad dates", () => {
-    expect(() => buildReport({ groupBy: ["nope"] })).toThrow();
-    expect(() => buildReport({ groupBy: [], from: "1; DROP TABLE orders" })).toThrow();
-    expect(() => buildReport({ groupBy: ["dim:1 OR 1=1"] })).toThrow();
+    const plan = (req: ReportRequest) => planReports(req, [req]);
+    expect(() => plan({ groupBy: ["nope"] })).toThrow();
+    expect(() => plan({ groupBy: [], from: "1; DROP TABLE orders" })).toThrow();
+    expect(() => plan({ groupBy: ["dim:1 OR 1=1"] })).toThrow();
+    expect(() => plan({ groupBy: [], filters: [{ dim: "nope", values: ["x"] }] })).toThrow();
+    expect(() => plan({ groupBy: ["month", "month"] })).toThrow();
+    expect(() => planReports({}, [])).toThrow();
+    expect(() => planReports({}, Array.from({ length: 41 }, () => ({ groupBy: [] })))).toThrow();
   });
 });
