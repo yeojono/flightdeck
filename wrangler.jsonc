@@ -34,6 +34,9 @@
     // Only orders with this Shopify order tag are imported. Set to "" to import every order.
     // Changing it makes each store re-import in full at its next sync.
     "ORDER_TAG": "wheels",
+    // Product metafields imported with each line item, so you can filter and group by them like a
+    // property. "namespace.key", comma separated. Changing it makes each store re-import in full.
+    "PRODUCT_METAFIELDS": "custom.ultimate_hub_set, custom.ultimate_rim_set",
     // Bytes of the Shopify export processed per workflow step.
     "INGEST_CHUNK_BYTES": "4000000",
     // Required for sign-in (see "Protect it with Cloudflare Access" in the README): the Zero Trust

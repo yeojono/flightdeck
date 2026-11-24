@@ -120,17 +120,51 @@ export function orderTag(env: Pick<Env, "ORDER_TAG">): string {
   return (env.ORDER_TAG ?? "").replace(/['"\\]/g, "").replace(/\s+/g, " ").trim();
 }
 
+export interface ProductMetafield {
+  namespace: string;
+  key: string;
+}
+
+const METAFIELD_PART = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The product metafields to import, from the PRODUCT_METAFIELDS setting: a comma separated list of
+ * "namespace.key" (a bare key means the "custom" namespace). Anything that is not a valid name is ignored.
+ */
+export function productMetafields(env: Pick<Env, "PRODUCT_METAFIELDS">): ProductMetafield[] {
+  const out: ProductMetafield[] = [];
+  for (const raw of (env.PRODUCT_METAFIELDS ?? "").split(",")) {
+    const item = raw.trim();
+    if (!item) continue;
+    const dot = item.lastIndexOf(".");
+    const namespace = dot === -1 ? "custom" : item.slice(0, dot);
+    const key = dot === -1 ? item : item.slice(dot + 1);
+    if (!METAFIELD_PART.test(namespace) || !METAFIELD_PART.test(key)) continue;
+    if (out.some((m) => m.namespace === namespace && m.key === key)) continue;
+    out.push({ namespace, key });
+  }
+  return out;
+}
+
 /**
  * The bulk export query. `since` limits it to orders updated after that time, and `tag` to
  * orders carrying that tag. With `withTags` each order comes with its tags so the import can
  * check them itself: Shopify does not document whether its tag search matches a whole tag.
+ * Each of `metafields` comes back on the line item's product as mf0, mf1, ... in the same order.
  */
-export function buildBulkQuery(opts: { since: string | null; withProducts: boolean; tag?: string | null; withTags?: boolean }): string {
+export function buildBulkQuery(opts: {
+  since: string | null;
+  withProducts: boolean;
+  tag?: string | null;
+  withTags?: boolean;
+  metafields?: ProductMetafield[];
+}): string {
   const terms: string[] = [];
   if (opts.tag) terms.push(`tag:'${opts.tag}'`);
   if (opts.since) terms.push(`updated_at:>='${opts.since}'`);
   const filter = terms.length ? `(query: "${terms.join(" AND ")}")` : "";
   const address = "{ provinceCode province countryCodeV2 country }";
+  const metafields = (opts.metafields ?? []).map((m, i) => ` mf${i}: metafield(namespace: "${m.namespace}", key: "${m.key}") { value }`).join("");
   return `{
   orders${filter} {
     edges { node {
@@ -141,7 +175,7 @@ export function buildBulkQuery(opts: { since: string | null; withProducts: boole
         id title variantTitle sku vendor quantity currentQuantity
         originalUnitPriceSet { shopMoney { amount } }
         discountedTotalSet { shopMoney { amount } }
-        ${opts.withProducts ? "product { id productType }" : ""}
+        ${opts.withProducts ? `product { id productType${metafields} }` : ""}
         customAttributes { key value }
       } } }
     } }

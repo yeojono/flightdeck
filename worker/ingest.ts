@@ -1,5 +1,5 @@
 import type { Env } from "./env";
-import { orderTag } from "./shopify";
+import { type ProductMetafield, orderTag, productMetafields } from "./shopify";
 import { RULES_VERSION, normColumn, wheelKind } from "./wheels";
 
 /**
@@ -33,14 +33,32 @@ export interface ParseOptions {
   tag?: string | null;
   /** The carry returned for the previous chunk of the same export. */
   carry?: Carry | null;
+  /** The product metafields the export asked for, in the order of the query (mf0, mf1, ...). */
+  metafields?: ProductMetafield[];
 }
 
 /**
  * What decides which orders a store holds and how their values were cleaned. A store whose data was
- * imported under a different scope (another tag, older rules) gets a full resync at its next sync.
+ * imported under a different scope (another tag, older rules, other product metafields) gets a full resync at its next sync.
  */
-export function importScope(env: Pick<Env, "ORDER_TAG">): string {
-  return `tag:${orderTag(env).toLowerCase()}|rules:${RULES_VERSION}`;
+export function importScope(env: Pick<Env, "ORDER_TAG" | "PRODUCT_METAFIELDS">): string {
+  const metafields = productMetafields(env).map((m) => `${m.namespace}.${m.key}`);
+  return `tag:${orderTag(env).toLowerCase()}|rules:${RULES_VERSION}` + (metafields.length ? `|metafields:${metafields.join(",")}` : "");
+}
+
+/** A metafield's value as text. A list metafield (stored as a JSON array) becomes its items joined by commas. */
+export function metafieldText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const v = value.trim();
+  if (v.startsWith("[")) {
+    try {
+      const list = JSON.parse(v);
+      if (Array.isArray(list)) return list.filter((x) => x !== null && x !== "").map(String).join(", ");
+    } catch {
+      /* plain text that happens to start with a bracket */
+    }
+  }
+  return v;
 }
 
 export function hasTag(tags: unknown, tag: string): boolean {
@@ -93,6 +111,8 @@ function money(set: any): number {
 export function parseJsonl(text: string, dayOf: (iso: string) => string, opts: ParseOptions = {}): Parsed {
   const out: Parsed = { orderIds: [], orders: [], lineItems: [], props: [], withAddress: 0, untaggedIds: [], carry: opts.carry ?? null };
   const tag = opts.tag?.trim() || null;
+  // A product metafield is stored like a line item property, under its key ("ultimate_hub_set").
+  const metafieldKeys = (opts.metafields ?? []).map((m) => normaliseKey(m.key));
   let pos = 0;
   while (pos < text.length) {
     let nl = text.indexOf("\n", pos);
@@ -145,6 +165,13 @@ export function parseJsonl(text: string, dayOf: (iso: string) => string, opts: P
         seen.add(key);
         attrs.push([key, value]);
       }
+      // A property typed on the line item wins over the product's metafield of the same name.
+      metafieldKeys.forEach((key, i) => {
+        const value = metafieldText(obj.product?.[`mf${i}`]?.value).replace(/\s+/g, " ").slice(0, MAX_VALUE_LENGTH);
+        if (!key || !value || seen.has(key)) return;
+        seen.add(key);
+        attrs.push([key, value]);
+      });
       // Whether this is a wheelset or a single wheel decides how some of its values are read.
       const kind = wheelKind(obj.title, obj.variantTitle);
       out.lineItems.push([

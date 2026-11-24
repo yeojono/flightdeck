@@ -100,7 +100,7 @@ export function Overview(ctx: AppContext) {
       {stale.length > 0 && (
         <div className="banner">
           {stale.map((s) => s.label).join(", ")} {stale.length === 1 ? "was" : "were"} imported before the current import settings
-          {meta.orderTag ? ` (only orders tagged “${meta.orderTag}”, and the latest value clean-up)` : ""}. The next sync re-imports {stale.length === 1 ? "it" : "them"}; until then these
+          {meta.orderTag ? ` (only orders tagged “${meta.orderTag}”, the latest value clean-up and product metafields)` : ""}. The next sync re-imports {stale.length === 1 ? "it" : "them"}; until then these
           reports show the older data. Start it now with Sync now on the <a href="#/stores">Stores</a> page.
         </div>
       )}

@@ -2,7 +2,7 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import type { Env, StoreRow, SyncParams } from "./env";
 import { type Carry, SWEEP_UNSEEN, completeLineBytes, importScope, makeDayFormatter, parseJsonl, writeParsed } from "./ingest";
-import { BULK_START, BULK_STATUS, SHOP_INFO, ShopifyError, buildBulkQuery, getAccessToken, gql, hasScope, orderTag } from "./shopify";
+import { BULK_START, BULK_STATUS, type ProductMetafield, SHOP_INFO, ShopifyError, buildBulkQuery, getAccessToken, gql, hasScope, orderTag, productMetafields } from "./shopify";
 
 const ACTIVE = ["queued", "exporting", "importing"];
 const MAX_POLLS = 600;
@@ -68,10 +68,11 @@ interface ChunkInput {
   timezone: string | null;
   tag: string | null;
   carry: Carry | null;
+  metafields: ProductMetafield[];
 }
 
 /** Downloads one byte range of the export, cut at a line boundary, and writes it to D1. */
-async function importChunk(env: Env, { storeId, runId, url, start, total, timezone, tag, carry }: ChunkInput): Promise<ChunkResult> {
+async function importChunk(env: Env, { storeId, runId, url, start, total, timezone, tag, carry, metafields }: ChunkInput): Promise<ChunkResult> {
   let size = Math.max(64_000, Number(env.INGEST_CHUNK_BYTES) || 4_000_000);
   for (;;) {
     const end = Math.min(start + size, total) - 1;
@@ -94,7 +95,7 @@ async function importChunk(env: Env, { storeId, runId, url, start, total, timezo
       size *= 4;
       continue;
     }
-    const parsed = parseJsonl(new TextDecoder().decode(buf.subarray(0, usable)), makeDayFormatter(timezone), { tag, carry });
+    const parsed = parseJsonl(new TextDecoder().decode(buf.subarray(0, usable)), makeDayFormatter(timezone), { tag, carry, metafields });
     await writeParsed(env.DB, storeId, runId, parsed);
     return { next: start + usable, total, orders: parsed.orders.length, lineItems: parsed.lineItems.length, withAddress: parsed.withAddress, carry: parsed.carry };
   }
@@ -137,6 +138,8 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
           since: kind === "full" ? null : store.sync_cursor,
           timezone: info.shop.ianaTimezone as string | null,
           withProducts: hasScope(store.scopes, "products"),
+          // Product metafields need the product, so they come with the read_products scope.
+          metafields: hasScope(store.scopes, "products") ? productMetafields(env) : [],
           allOrders: hasScope(store.scopes, "all_orders"),
           tag: orderTag(env) || null,
           scope: importScope(env),
@@ -152,7 +155,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
           // A full resync asks Shopify for tagged orders only. A changes-only sync asks for every changed order
           // with its tags, so an order that has lost the tag is noticed and removed.
           const tag = prep.tag ?? null;
-          const q = buildBulkQuery({ since: prep.since, withProducts: prep.withProducts, tag: kind === "full" ? tag : null, withTags: !!tag });
+          const q = buildBulkQuery({ since: prep.since, withProducts: prep.withProducts, tag: kind === "full" ? tag : null, withTags: !!tag, metafields: prep.metafields ?? [] });
           data = await gql(env, store.shop, token, BULK_START, { q });
         } catch (err) {
           if (err instanceof ShopifyError && err.code === "ACCESS_DENIED") throw new NonRetryableError(explainBulkFailure("ACCESS_DENIED", err.message));
@@ -202,7 +205,7 @@ export class SyncWorkflow extends WorkflowEntrypoint<Env, SyncParams> {
         for (let n = 0; offset < total; n++) {
           const from = offset;
           const sums = { orders, lineItems };
-          const input: ChunkInput = { storeId, runId, url, start: from, total, timezone: prep.timezone, tag: prep.tag ?? null, carry };
+          const input: ChunkInput = { storeId, runId, url, start: from, total, timezone: prep.timezone, tag: prep.tag ?? null, carry, metafields: prep.metafields ?? [] };
           const r = await step.do(`import ${n}`, retry, async () => {
             await loadStore(env, storeId);
             const res = await importChunk(env, input);
