@@ -242,6 +242,19 @@ export function Stores({ meta, reloadMeta }: AppContext) {
         <p className="hint">The client secret is encrypted before it is stored. Only order dates, totals, line items, their properties and the shipping state and country are imported. No customer names, emails or street addresses.</p>
       </section>
 
+      <section className="card">
+        <header className="card-head">
+          <h2>Export data</h2>
+          <a className="secondary button" href="/api/export.csv" download>
+            Download CSV
+          </a>
+        </header>
+        <p className="hint">
+          Everything imported from every store in one file: a row per line item with its order, store, each attribute as shown in reports, and each property as imported. Cancelled and test orders are
+          included and marked. Store credentials are not.
+        </p>
+      </section>
+
       {runs.length > 0 && (
         <section className="card">
           <header className="card-head">
