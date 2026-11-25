@@ -239,6 +239,7 @@ describe("upgrade migration", () => {
 describe("sets and single wheels in reports", () => {
   const db = upgradedDb();
   db.exec(migration("0004_wheels.sql"));
+  db.exec(migration("0007_line_item_props_json.sql"));
   const p = parseJsonl(
     jsonl([
       { lines: [{ title: SET_NEW, props: { Size: "29", "Hole Count": "32 / 28 (Recommended)", Freehub: "Shimano HG", "Rear Hub": "148x12 Boost" }, qty: 3 }] },
@@ -360,6 +361,7 @@ describe("importing only tagged orders", () => {
   it("removes an order that lost its tag, and what a full resync did not see", async () => {
     const db = upgradedDb();
     db.exec(migration("0004_wheels.sql"));
+    db.exec(migration("0007_line_item_props_json.sql"));
     db.exec("DELETE FROM line_item_props");
     const counts = () => db.prepare("SELECT (SELECT COUNT(*) FROM orders) o, (SELECT COUNT(*) FROM line_items) l, (SELECT COUNT(*) FROM line_item_props) p").get();
     const ids = () => db.prepare("SELECT id FROM orders ORDER BY id").all().map((r: any) => r.id);

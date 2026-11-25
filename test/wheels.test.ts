@@ -30,7 +30,7 @@ const TITLES: Array<[title: string, variant: string | null, wheels: number]> = [
 
 function load(items: Array<{ title: string; variant: string | null; qty: number; current?: number }>) {
   const db = new DatabaseSync(":memory:");
-  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) db.exec(migration(m));
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0007_line_item_props_json.sql"]) db.exec(migration(m));
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc) VALUES (1, 's', 'Store', 'x', 'x')`);
   const lines: string[] = [];
   items.forEach((it, i) => {
