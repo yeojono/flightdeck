@@ -26,8 +26,13 @@ function currentPage(): PageId {
 export interface AppContext {
   meta: Meta;
   reloadMeta: () => void;
+  /** The filters the reports on screen were run with. */
   filters: FilterState;
-  setFilters: (f: FilterState) => void;
+  /** The filter form as it stands. Changes wait here until Run query is pressed. */
+  draft: FilterState;
+  setDraft: (f: FilterState) => void;
+  /** Runs the reports with the filter form as it stands. */
+  runQuery: () => void;
   go: (page: PageId) => void;
 }
 
@@ -41,6 +46,8 @@ export function App() {
   const [metaError, setMetaError] = useState<string | null>(null);
   const [storedFilters, setFilters] = useStored<FilterState>("wi.filters", DEFAULT_FILTERS);
   const filters = useMemo(() => withPinned(storedFilters), [storedFilters]);
+  // Kept here rather than in the filter bar so that unrun changes survive moving between pages.
+  const [draft, setDraft] = useState(filters);
 
   useEffect(() => {
     setUnauthorisedHandler(() => setSession("out"));
@@ -72,7 +79,7 @@ export function App() {
   if (session === "loading") return <div className="center muted">Loading…</div>;
   if (session === "out") return <SignedOut configError={configError} accessSetup={accessSetup} />;
 
-  const ctx: AppContext | null = meta && { meta, reloadMeta, filters, setFilters, go };
+  const ctx: AppContext | null = meta && { meta, reloadMeta, filters, draft, setDraft, runQuery: () => setFilters(draft), go };
   return (
     <div className="shell">
       <aside className="nav">

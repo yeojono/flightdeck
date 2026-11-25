@@ -169,7 +169,7 @@ export function useReports<K extends string>(base: ReportBase, specs: Record<K, 
   useEffect(() => {
     const ctrl = new AbortController();
     setState((s) => ({ ...s, loading: true, error: null }));
-    // Short delay so typing in a filter does not fire a request per keystroke.
+    // Short delay so several changes made at once (a new grouping and its split, say) fire one request.
     const timer = setTimeout(() => {
       const [sentBase, sentSpecs] = JSON.parse(key) as [ReportBase, Record<K, ReportSpec>];
       const names = Object.keys(sentSpecs) as K[];

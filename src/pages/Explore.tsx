@@ -15,7 +15,7 @@ interface ExploreState {
 const TIME = new Set(["day", "week", "month", "quarter", "year"]);
 const TABLE_LIMIT = 500;
 
-export function Explore({ meta, filters, setFilters }: AppContext) {
+export function Explore({ meta, filters, draft, setDraft, runQuery }: AppContext) {
   const theme = useTheme();
   const firstAttr = meta.dimensions.find((d) => d.group === "Attributes" && d.mapped)?.id ?? "product";
   const [state, setState] = useStored<ExploreState>("wi.explore", { metric: "wheels", groupBy: firstAttr, splitBy: "", topN: 15, view: "chart", includeMissing: false });
@@ -60,7 +60,7 @@ export function Explore({ meta, filters, setFilters }: AppContext) {
   return (
     <div className="page">
       <h1>Explore</h1>
-      <FilterBar meta={meta} state={filters} onChange={setFilters} />
+      <FilterBar meta={meta} state={draft} onChange={setDraft} applied={filters} onRun={runQuery} />
 
       <section className="card">
         <div className="controls">

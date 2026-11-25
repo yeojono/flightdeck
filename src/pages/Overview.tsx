@@ -54,7 +54,7 @@ function Card({ ctx, data, loading, title, by, dim, metric: wanted, time, onOpen
 }
 
 export function Overview(ctx: AppContext) {
-  const { meta, filters, setFilters, go } = ctx;
+  const { meta, filters, go } = ctx;
   const grain = timeGrain(filters);
   const attrs = meta.dimensions.filter((d) => d.group === "Attributes" && d.mapped);
   // Everything on the page in one request. The chart over time keeps its name when its grain changes, so it stays on screen while reloading.
@@ -104,7 +104,7 @@ export function Overview(ctx: AppContext) {
   return (
     <div className="page">
       <h1>Overview</h1>
-      <FilterBar meta={meta} state={filters} onChange={setFilters} />
+      <FilterBar meta={meta} state={ctx.draft} onChange={ctx.setDraft} applied={filters} onRun={ctx.runQuery} />
       {!meta.range.orders && <div className="banner">No orders imported yet. Check sync progress on the Stores page.</div>}
       {stale.length > 0 && (
         <div className="banner">

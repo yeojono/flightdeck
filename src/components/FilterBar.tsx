@@ -62,7 +62,14 @@ function MultiSelect({ label, dim, values, onChange, onRemove }: { label: string
       </button>
       {open && (
         <div className="ms-pop" role="dialog" aria-label={`Filter by ${label}`}>
-          <input autoFocus placeholder={`Search ${label.toLowerCase()}`} value={query} onChange={(e) => setQuery(e.target.value)} />
+          {/* Enter here is not a request to run the query. */}
+          <input
+            autoFocus
+            placeholder={`Search ${label.toLowerCase()}`}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}
+          />
           <div className="ms-list">
             {error && <div className="ms-note">{error}</div>}
             {!options && !error && <div className="ms-note">Loading…</div>}
@@ -117,14 +124,28 @@ export function DimOptions({ dims, exclude }: { dims: Dim[]; exclude?: (d: Dim) 
   );
 }
 
-export function FilterBar({ meta, state, onChange }: { meta: Meta; state: FilterState; onChange: (s: FilterState) => void }) {
+const fields = (f: FilterState) => JSON.stringify([f.preset, f.from, f.to, f.filters.map((x) => [x.dim, x.values]), f.search, f.includeCancelled]);
+
+/**
+ * The filter form. Changing it does not run anything: `state` is the form as it stands, `applied`
+ * is what the reports on screen were run with, and Run query (or Enter) runs them with the form.
+ * The button is only enabled while the two differ.
+ */
+export function FilterBar({ meta, state, onChange, applied, onRun }: { meta: Meta; state: FilterState; onChange: (s: FilterState) => void; applied: FilterState; onRun: () => void }) {
+  const changed = fields(state) !== fields(applied);
   const labelOf = (id: string) => meta.dimensions.find((d) => d.id === id)?.label ?? id.replace(/^prop:/, "");
   const setFilter = (dim: string, values: string[]) => onChange({ ...state, filters: state.filters.map((f) => (f.dim === dim ? { ...f, values } : f)) });
   const active = state.filters.some((f) => f.values.length) || state.search || state.includeCancelled;
   const used = new Set(state.filters.map((f) => f.dim));
 
   return (
-    <div className="filters">
+    <form
+      className="filters"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (changed) onRun();
+      }}
+    >
       <select className="control" value={state.preset} onChange={(e) => onChange({ ...state, preset: e.target.value as Preset })} aria-label="Date range">
         {PRESETS.map((p) => (
           <option key={p.id} value={p.id}>
@@ -167,6 +188,9 @@ export function FilterBar({ meta, state, onChange }: { meta: Meta; state: Filter
           Reset
         </button>
       )}
-    </div>
+      <button type="submit" className="primary" disabled={!changed} title={changed ? undefined : "Change a filter to run the query again"}>
+        Run query
+      </button>
+    </form>
   );
 }
