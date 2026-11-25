@@ -175,6 +175,7 @@ export function parseJsonl(text: string, dayOf: (iso: string) => string, opts: P
       });
       // Whether this is a wheelset or a single wheel decides how some of its values are read.
       const kind = wheelKind(obj.title, obj.variantTitle);
+      const cleaned = attrs.map(([key, value]) => [key, value, normColumn(key, value, kind)] as const);
       out.lineItems.push([
         id,
         orderId,
@@ -189,8 +190,10 @@ export function parseJsonl(text: string, dayOf: (iso: string) => string, opts: P
         money(obj.originalUnitPriceSet),
         money(obj.discountedTotalSet),
         kind,
+        // The cleaned properties again, on the line item, which is where reports read them from.
+        JSON.stringify(Object.fromEntries(cleaned.map(([key, value, norm]) => [key, norm ?? value]))),
       ]);
-      for (const [key, value] of attrs) out.props.push([id, key, value, orderId, normColumn(key, value, kind)]);
+      for (const [key, value, norm] of cleaned) out.props.push([id, key, value, orderId, norm]);
     }
   }
   return out;
@@ -211,8 +214,8 @@ export const INSERT_ORDERS = `INSERT OR REPLACE INTO orders
   SELECT ?1, ${cols(13)}, ?3 FROM json_each(?2)`;
 
 export const INSERT_LINE_ITEMS = `INSERT OR REPLACE INTO line_items
-  (store_id, id, order_id, title, variant_title, sku, vendor, product_id, product_type, quantity, current_quantity, unit_price, total, wheel_kind)
-  SELECT ?1, ${cols(13)} FROM json_each(?2)`;
+  (store_id, id, order_id, title, variant_title, sku, vendor, product_id, product_type, quantity, current_quantity, unit_price, total, wheel_kind, props)
+  SELECT ?1, ${cols(14)} FROM json_each(?2)`;
 
 export const INSERT_PROPS = `INSERT OR REPLACE INTO line_item_props
   (store_id, line_item_id, key, value, order_id, norm)

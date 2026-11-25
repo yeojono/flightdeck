@@ -13,7 +13,7 @@ const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`
 
 function freshDb() {
   const db = new DatabaseSync(":memory:");
-  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) db.exec(migration(m));
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0007_line_item_props_json.sql"]) db.exec(migration(m));
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc) VALUES (1, 's', 'Store', 'x', 'x')`);
   db.exec(`INSERT INTO dimension_keys (key, dimension_id) VALUES ('hub colour', 3), ('colour', 3)`);
   return db;
@@ -127,6 +127,25 @@ describe("Freehub attribute", () => {
     db.exec(`INSERT INTO dimensions (name, sort) VALUES ('freehub', 9)`);
     db.exec(migration("0003_value_grouping.sql"));
     expect((db.prepare(`SELECT COUNT(*) n FROM dimensions WHERE name LIKE 'freehub'`).get() as any).n).toBe(1);
+  });
+});
+
+describe("upgrade to properties on the line item", () => {
+  it("copies the cleaned properties of existing line items and swaps the value index", () => {
+    const db = new DatabaseSync(":memory:");
+    for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) db.exec(migration(m));
+    db.exec(`INSERT INTO line_items (store_id, id, order_id, title) VALUES (1, 10, 5, 'Wheelset'), (1, 11, 5, 'Valve'), (2, 10, 7, 'Rear Wheel')`);
+    db.exec(`INSERT INTO line_item_props (store_id, line_item_id, key, value, order_id, norm) VALUES
+      (1, 10, 'size', '29"', 5, '29 Set'), (1, 10, 'rim', 'Origin', 5, NULL), (2, 10, 'size', '27.5″', 7, '27.5')`);
+    db.exec(migration("0007_line_item_props_json.sql"));
+    const props = db.prepare("SELECT store_id, id, props FROM line_items ORDER BY store_id, id").all().map((r: any) => [r.store_id, r.id, JSON.parse(r.props)]);
+    expect(props).toEqual([
+      [1, 10, { rim: "Origin", size: "29 Set" }],
+      [1, 11, {}],
+      [2, 10, { size: "27.5" }],
+    ]);
+    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'line_item_props' AND sql IS NOT NULL ORDER BY name").all().map((r: any) => r.name);
+    expect(indexes).toEqual(["line_item_props_order", "line_item_props_shown"]);
   });
 });
 

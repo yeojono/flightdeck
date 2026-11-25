@@ -9,7 +9,7 @@ import { buildBulkQuery, productMetafields } from "../worker/shopify";
 import { runReport } from "./run-report";
 
 const migration = (name: string) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8");
-const MIGRATIONS = ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0005_product_metafields.sql"];
+const MIGRATIONS = ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0005_product_metafields.sql", "0007_line_item_props_json.sql"];
 const SETTING = { PRODUCT_METAFIELDS: "custom.ultimate_hub_set, custom.ultimate_rim_set" };
 const day = makeDayFormatter("UTC");
 

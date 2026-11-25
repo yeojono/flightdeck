@@ -69,7 +69,7 @@ function expectedByAttr(jsonl: string, key: string) {
 }
 
 beforeAll(() => {
-  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql"]) {
+  for (const m of ["0001_init.sql", "0002_drop_login_attempts.sql", "0003_value_grouping.sql", "0004_wheels.sql", "0007_line_item_props_json.sql"]) {
     db.exec(readFileSync(new URL(`../migrations/${m}`, import.meta.url), "utf8"));
   }
   db.exec(`INSERT INTO stores (id, shop, label, client_id, client_secret_enc, currency, fx_rate) VALUES
@@ -187,9 +187,9 @@ describe("report", () => {
       { groupBy: ["dim:2"], limit: 3 },
     ];
     const plan = planReports(base, specs);
-    // One statement reads the line items; the other two are the small mapping tables.
-    expect(plan.statements.length).toBe(3);
-    expect(planReports({}, [{ groupBy: ["month"] }, { groupBy: ["country"] }]).statements.length).toBe(1);
+    // One statement reads the line items; the others are the stores and the two small mapping tables.
+    expect(plan.statements.length).toBe(4);
+    expect(planReports({}, [{ groupBy: ["month"] }, { groupBy: ["country"] }]).statements.length).toBe(2);
     const together = finishReports(
       plan,
       plan.statements.map((st) => db.prepare(st.sql).all(...(st.params as any[]))),
@@ -217,6 +217,89 @@ describe("report", () => {
   it("shows a value under its most common spelling", () => {
     const { rows } = report({ groupBy: ["dim:3"] });
     expect(rows.find((r) => r.g1.toLowerCase() === "black").g1).toBe("Black");
+  });
+
+  it("reads properties from the copy on the line item, which matches the property rows", () => {
+    const copies = db
+      .prepare(`SELECT li.props, (SELECT json_group_object(p.key, COALESCE(p.norm, p.value)) FROM line_item_props p
+                  WHERE p.store_id = li.store_id AND p.line_item_id = li.id) AS expected FROM line_items li`)
+      .all() as any[];
+    expect(copies.length).toBeGreaterThan(700);
+    for (const c of copies) expect(JSON.parse(c.props)).toEqual(JSON.parse(c.expected));
+    expect(copies.some((c) => c.props === "{}")).toBe(true);
+    const plan = planReports({}, [{ groupBy: ["dim:1"] }]);
+    const steps = (db.prepare(`EXPLAIN QUERY PLAN ${plan.statements[0].sql}`).all() as any[]).map((r) => r.detail).join("\n");
+    expect(plan.statements[0].sql).toContain("li.props");
+    expect(steps).not.toContain("line_item_props_shown");
+  });
+
+  it("falls back to the property rows for a line item whose copy was never written", () => {
+    const requests: ReportRequest[] = [{ groupBy: ["dim:1", "dim:4"] }, { groupBy: ["month"], filters: [{ dim: "dim:3", values: ["Black"] }] }];
+    const before = requests.map(report);
+    db.exec("BEGIN");
+    db.exec("UPDATE line_items SET props = NULL WHERE store_id = 2 OR id % 3 = 0");
+    expect(requests.map(report)).toEqual(before);
+    db.exec("ROLLBACK");
+  });
+
+  it("starts a filtered read at the line items that have the value", () => {
+    const plan = planReports({ from: "2026-01-01", filters: [{ dim: "dim:1", values: ["DT Swiss XM 481"] }, { dim: "prop:hub", values: ["Hope Pro 5"] }] }, [{ groupBy: ["month"] }]);
+    // With the planner's statistics in place, as they are after every sync.
+    db.exec("ANALYZE");
+    const steps = (db.prepare(`EXPLAIN QUERY PLAN ${plan.statements[0].sql}`).all(...(plan.statements[0].params as any[])) as any[]).map((r) => r.detail as string);
+    const at = (text: string) => steps.findIndex((d) => d.includes(text));
+    // The index on cleaned values finds them by key and value, then each line item and its order is looked up by key.
+    expect(steps[at("SEARCH f ")]).toMatch(/line_item_props_shown \(key=\? AND <expr>=\?\)/);
+    expect(steps[at("SEARCH li ")]).toContain("PRIMARY KEY (store_id=? AND order_id=? AND id=?)");
+    expect(steps[at("SEARCH o ")]).toContain("PRIMARY KEY (store_id=? AND id=?)");
+    expect(at("SCAN m")).toBeLessThan(at("SEARCH li "));
+    expect(at("SEARCH li ")).toBeLessThan(at("SEARCH o "));
+    // Nothing reads a whole table: no scan of line items or orders, and no lookup filter built from one.
+    expect(steps.filter((d) => /^SCAN (li|o|f)\b|BLOOM|AUTOMATIC/.test(d))).toEqual([]);
+  });
+
+  it("gives a filtered report the same numbers as that value's row in the unfiltered one", () => {
+    const numbers = (r: any) => ({ wheels: r.wheels, units: r.units, orders: r.orders, line_items: r.line_items, revenue: r.revenue });
+    let checked = 0;
+    for (const dim of ["dim:1", "dim:2", "dim:3", "dim:4", "prop:rim choice", "prop:hub colour"]) {
+      for (const base of [{}, { from: "2026-02-01", to: "2026-08-31", includeCancelled: true }]) {
+        for (const row of report({ ...base, groupBy: [dim] }).rows) {
+          // As shown, in another case, and (for sizes) as a customer would have typed it.
+          for (const typed of [row.g1, row.g1.toUpperCase(), row.g1.replace(/^(\d+(\.\d+)?)( |$)/, '$1"$3')]) {
+            const filtered = report({ ...base, groupBy: [], filters: [{ dim, values: [typed] }] }).totals;
+            expect(numbers(filtered), `${dim} = ${typed}`).toEqual(numbers(row));
+            checked++;
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+    // Two filters: the first starts the read, both are applied.
+    const both = report({ groupBy: ["dim:1"], filters: [{ dim: "dim:2", values: ["Hope Pro 5"] }, { dim: "dim:1", values: ["DT Swiss XM 481", "Reserve 30 HD"] }] });
+    const split = report({ groupBy: ["dim:1", "dim:2"] }).rows.filter((r) => r.g2 === "Hope Pro 5" && ["DT Swiss XM 481", "Reserve 30 HD"].includes(r.g1));
+    expect(both.rows.map((r) => [r.g1, r.units])).toEqual(split.map((r) => [r.g1, r.units]));
+    expect(report({ groupBy: [], filters: [{ dim: "dim:1", values: ["no such rim"] }] }).totals.line_items).toBe(0);
+  });
+
+  it("finds combined values by their label, and counts a line item with two matching keys once", () => {
+    const rims = report({ groupBy: ["dim:1"] }).rows;
+    const [a, b] = rims;
+    db.exec("BEGIN");
+    const group = db.prepare("INSERT INTO value_groups (dimension_id, value, label) VALUES (1, ?, 'Top two')");
+    group.run(a.g1.toUpperCase());
+    group.run(b.g1);
+    const top = report({ groupBy: [], filters: [{ dim: "dim:1", values: ["top TWO"] }] }).totals;
+    expect(top.units).toBe(a.units + b.units);
+    expect(top.line_items).toBe(a.line_items + b.line_items);
+    // Under their own names they are no longer shown, so no longer found.
+    expect(report({ groupBy: [], filters: [{ dim: "dim:1", values: [a.g1] }] }).totals.line_items).toBe(0);
+
+    // Give every AU line item with a rim the US key as well, with the same value.
+    db.exec(`INSERT INTO line_item_props (store_id, line_item_id, key, value, order_id)
+             SELECT store_id, line_item_id, 'rim choice', value, order_id FROM line_item_props WHERE store_id = 1 AND key = 'rim'`);
+    db.exec("UPDATE line_items SET props = NULL WHERE store_id = 1");
+    expect(report({ groupBy: [], filters: [{ dim: "dim:1", values: ["Top two"] }] }).totals).toEqual(top);
+    db.exec("ROLLBACK");
   });
 
   it("rejects unknown dimensions and bad dates", () => {
